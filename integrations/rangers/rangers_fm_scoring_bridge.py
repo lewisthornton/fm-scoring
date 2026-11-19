@@ -16,6 +16,7 @@ import csv
 from collections import Counter, defaultdict
 from datetime import datetime
 import html
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -27,10 +28,6 @@ import time
 import tomllib
 import webbrowser
 from rangers_club import loan_state, rangers_ids
-
-# The CLI can be launched directly from any working directory.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scoring import weighted
 
 DEFAULT_DB = Path(__file__).resolve().parent / "fm_rangers_scoped.sqlite3"
 DEFAULT_SLUG = "rangers-recruitment"
@@ -57,6 +54,9 @@ def find_root(explicit: Path | None):
         if not (p / "score.py").is_file() or not (p / "weights" / "fm27v2.toml").is_file():
             raise RuntimeError(f"Not an fm-scoring checkout with weights/fm27v2.toml: {p}")
         return p
+    checkout = Path(__file__).resolve().parent.parent.parent
+    if (checkout / "score.py").is_file() and (checkout / "weights" / "fm27v2.toml").is_file():
+        return checkout
     # Windows normal and OneDrive-redirected Documents, plus a checkout beside the bridge.
     home = Path.home()
     candidates = [
@@ -80,6 +80,19 @@ def find_root(explicit: Path | None):
         if (p / "score.py").is_file() and (p / "weights" / "fm27v2.toml").is_file():
             return p.resolve()
     raise RuntimeError("Can't find fm-scoring. Clone https://github.com/jamiebolden/fm-scoring, then pass --fm-scoring-root \"C:\\path\\to\\fm-scoring\".")
+
+
+def load_weighted(root: Path):
+    """Load the exact scorer from the checkout selected for native rendering."""
+    path = root / "scoring.py"
+    if not path.is_file():
+        raise RuntimeError(f"Shared scoring module missing: {path}. Update the selected fm-scoring checkout.")
+    spec = importlib.util.spec_from_file_location("_fm_scoring_shared", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load shared scoring module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.weighted
 
 
 def get_database(dbpath: Path, career: str):
@@ -203,18 +216,22 @@ def position_rating(raw, role):
     return 18 if natural & codes else 15 if accomplished & codes else None
 
 
-def score(attrs, weights):
+def score(attrs, weights, *, scorer=None):
     """Adapt the shared grouped scorer to a single optional score."""
     if not weights:
         return None
+    if scorer is None:
+        scorer = load_weighted(find_root(None))
     try:
-        return weighted(attrs, {"score": weights}).get("score")
+        return scorer(attrs, {"score": weights}).get("score")
     except ZeroDivisionError:
         # Preserve the bridge's existing treatment of zero-total profiles.
         return None
 
 
-def scored_people(people, model):
+def scored_people(people, model, *, scorer=None):
+    if scorer is None:
+        scorer = load_weighted(find_root(None))
     canonical_names = {name.casefold(): name for profile in [model["gk"], *model["outfield"].values()]
                        for name in profile}
     for person in people:
@@ -224,7 +241,7 @@ def scored_people(people, model):
         models = {"GK": model["gk"]} if keeper else model["outfield"]
         person["attrs"] = attrs
         person["keeper"] = keeper
-        person["scores"] = {role: score(attrs, weights) for role, weights in models.items()}
+        person["scores"] = {role: score(attrs, weights, scorer=scorer) for role, weights in models.items()}
         person["fit"] = {role: position_rating(raw, role) for role in models}
         state = str(raw.get("transfer_value_state") or "").strip().lower()
         person["valuation"] = as_num(raw.get("transfer_value")) if state in {"ok", "zero"} else None
@@ -465,7 +482,7 @@ def sync_once(args, root):
     path = args.db.expanduser().resolve()
     people, date, sources = get_database(path, args.career)
     weights = tomllib.loads((root / "weights" / "fm27v2.toml").read_text(encoding="utf-8"))
-    scored_people(people, weights)
+    scored_people(people, weights, scorer=load_weighted(root))
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
     keeper_targets = [p for p in people if p["keeper"] and "target" in p["cohorts"] and "squad" not in p["cohorts"]]
     unscored_keepers = [p["name"] for p in [*keeper_squad, *keeper_targets]
