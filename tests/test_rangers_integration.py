@@ -205,9 +205,10 @@ class IntegrationTests(unittest.TestCase):
             {"club_uid": str(i), "team_slot": 0} for i in range(100, 112)]}]
         self.league_fixtures = [
             {"competition_id": "500", "season_start_year": "2026",
-             "date": (date(2026, 8, 1) + timedelta(days=index * 24)).isoformat(),
-             "home_club_uid": "100", "away_club_uid": str(uid), "home_team_slot": 0, "away_team_slot": 0}
-            for index, uid in enumerate(range(101, 112))]
+             "date": (date(2026, 8, 1) + timedelta(days=index * 12)).isoformat(),
+             "home_club_uid": str(uid) if away else "100", "away_club_uid": "100" if away else str(uid),
+             "home_team_slot": 0, "away_team_slot": 0, "stage_id": "500", "round": "", "round_code": ""}
+            for index, (away, uid) in enumerate((away, uid) for away in (False, True) for uid in range(101, 112))]
         (self.root / "leagues").mkdir()
         (self.root / "leagues/divisions.toml").write_text('[nations]\n793 = "SCO"\n', encoding="utf-8")
         names = self.root / "competition-names.csv"
@@ -249,6 +250,16 @@ class IntegrationTests(unittest.TestCase):
         metadata_reads = sum(c[:2] == ("export", "league-tables") for c in self.commands)
         self.process(benchmark_root=self.root, benchmark_names=names)
         self.assertEqual(sum(c[:2] == ("export", "league-tables") for c in self.commands), metadata_reads)
+        # An aggregate from the pre-review detector must not bypass the new
+        # competition gate even when the save hash and game date are identical.
+        old_cache = json.loads(self.db.execute("SELECT aggregate_json FROM career_benchmark WHERE career=?", (CAREER,)).fetchone()[0])
+        old_cache.pop("detection_policy")
+        self.db.execute("UPDATE career_benchmark SET aggregate_json=? WHERE career=?", (json.dumps(old_cache), CAREER))
+        self.db.commit()
+        self.render()
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["reason"], "benchmark_detection_requires_refresh")
+        self.process(benchmark_root=self.root, benchmark_names=names)
+        self.assertEqual(sum(c[:2] == ("export", "league-tables") for c in self.commands), metadata_reads + 1)
 
         self.game_date = "2027-01-03"
         self.process(benchmark_root=self.root, benchmark_names=names)
