@@ -1,5 +1,6 @@
 """Characterisation of the existing Rangers integration using invented data."""
 import csv
+import hashlib
 import json
 import os
 import re
@@ -104,7 +105,7 @@ class IntegrationTests(unittest.TestCase):
         return set(self.db.execute("SELECT player_key, cohort FROM cohort_membership WHERE active=1"))
 
     def prepare_renderer(self):
-        for name in ("score.py", "template.html", "charts.html", "theme.css"):
+        for name in ("score.py", "scoring.py", "template.html", "charts.html", "theme.css"):
             shutil.copyfile(ROOT / name, self.root / name)
         shutil.copytree(ROOT / "weights", self.root / "weights")
 
@@ -125,6 +126,91 @@ class IntegrationTests(unittest.TestCase):
     def dashboard(self, directory):
         body = (directory / "recruitment.html").read_text(encoding="utf-8")
         return json.loads(re.search(r'<script id="dataset" type="application/json">(.*?)</script>', body).group(1))
+
+    def test_standalone_bridge_uses_explicit_checkout_and_default_database(self):
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+        expected = {p.name: p.read_bytes() for p in out.glob("*.html")}
+        launcher = self.root / "FMAnalytics"
+        launcher.mkdir()
+        for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
+            shutil.copyfile(ROOT / "integrations/rangers" / name, launcher / name)
+        # Model the standalone Windows installation with its database beside
+        # the launcher and the scoring module only in the selected checkout.
+        standalone_db = launcher / "fm_rangers_scoped.sqlite3"
+        copy = sqlite3.connect(standalone_db)
+        try:
+            self.db.backup(copy)
+        finally:
+            copy.close()
+        before = standalone_db.read_bytes()
+        command = [
+            sys.executable, str(launcher / "rangers_fm_scoring_bridge.py"),
+            "--fm-scoring-root", str(self.root), "--career", CAREER, "--slug", SLUG,
+        ]
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual(standalone_db.read_bytes(), before)
+
+        # An unrelated module beside the launcher must not shadow the selected
+        # checkout's scorer. A missing checkout module must fail explicitly.
+        (launcher / "scoring.py").write_text("raise AssertionError('wrong scorer')\n", encoding="utf-8")
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        (self.root / "scoring.py").rename(self.root / "scoring.disabled")
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Shared scoring module missing", result.stdout)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual(standalone_db.read_bytes(), before)
+
+    def test_frozen_generated_output_parity(self):
+        # Multiple outfield and goalkeeper targets exercise candidate ordering.
+        self.world.extend([player(20, "Fixture Alternate Defender"),
+                           player(21, "Fixture Alternate Keeper", keeper=True)])
+        self.candidates.extend([{"Unique ID": "20"}, {"Unique ID": "21"}])
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+
+        def normalise(value):
+            # Python 3.12 changed floating-point sum; allow only tiny
+            # platform rounding differences while preserving list order.
+            if isinstance(value, float):
+                return round(value, 9) or 0.0
+            if isinstance(value, dict):
+                return {key: normalise(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [normalise(item) for item in value]
+            return value
+
+        actual = {}
+        for path in sorted(out.glob("*.html")):
+            body = path.read_text(encoding="utf-8")
+            if path.stem == "recruitment":
+                payload = self.dashboard(out)
+            elif path.stem == "charts":
+                payload = json.loads(re.search(r"HOME_DIVISION \} = (.*?);\n", body).group(1))
+            else:
+                payload = {name: json.loads(re.search(rf"const {name} = (.*?);", body).group(1))
+                           for name in ("DATA", "COLS", "WEIGHTS", "WIN", "PTS", "BATCHES")}
+                payload["SITE"] = json.loads(re.search(r", SITE = (.*?), PAGES = SITE.pages;", body).group(1))
+            canonical = json.dumps(normalise(payload), sort_keys=True, separators=(",", ":"))
+            actual[path.stem] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        # Frozen on feature/rangers-integration before extracting scoring.py.
+        self.assertEqual(actual, {
+            "charts": "79b44edf144b3e5c39381809432f4030fa25dab665a99f64732b462a91a8b16b",
+            "filters": "ac2f7c2c6d77f2446f386fa2f3384586546008efc9ca2e9422a34d30caa624e4",
+            "last": "6554706a5fa64909203cb6d832437c139c99828c672af7562fbecb7e33bbf932",
+            "last_staff": "1b88049df299a47de4ec81941b84204684cf25a02d4d81edd72b99f642c51dab",
+            "players": "af18ac050e71b3ecb41ebb71b937ace806406c2c1e9edbd1f9e2cb283417f130",
+            "recruitment": "a420a8f4e2cac3243c8a7637de83d0c8fee5bdde1cd26482e479f241647015d6",
+            "squad": "daaf13543eb10be4e043835695a2c1e1f90969e6621ee5eb4679c9c7bc8d4871",
+            "staff": "1b88049df299a47de4ec81941b84204684cf25a02d4d81edd72b99f642c51dab",
+        })
 
     def expected_score(self, record, weights):
         return sum(int(record["attributes_" + a.lower().replace(" ", "_")]) * w
