@@ -237,11 +237,13 @@ def identity(row):
 def choose_rows(world_csv, candidates, managed_uid):
     fields, world = read_csv(world_csv)
     required = {'uid','unique_id','birth_date','name','ability_current','ability_potential',
-                'club_uid','on_loan','loan_parent_club_uid'}
+                'club_uid','loan_parent_club_uid'}
     if not required <= set(fields):
         raise ValueError('fmsave export columns changed; expected '+', '.join(sorted(required)))
+    # A verified parent UID is sufficient to retain a possible owned player.
+    # The bridge classifies a missing/contradictory loan flag as unknown.
     squad = [r for r in world if club_uid(r.get('club_uid')) == managed_uid or
-             (str(r.get('on_loan','')).lower() == 'true' and club_uid(r.get('loan_parent_club_uid')) == managed_uid)]
+             club_uid(r.get('loan_parent_club_uid')) == managed_uid]
     if not any(club_uid(r.get('club_uid')) == managed_uid for r in squad):
         raise ValueError('Managed-club export has no Rangers players; verify the save is your Rangers career')
     rows = {identity(r): r for r in squad}
@@ -465,7 +467,11 @@ def process(db,source,career,export):
         world_file=temp/'all.csv'
         # fmsave's managed-club player scope uses the current club, excluding
         # players registered elsewhere on loan. Read all players transiently.
+        log('Starting temporary full-world player export')
+        export_started=time.monotonic()
         fmsave('export',str(copy),'players','--all','-o',str(world_file),'--strict')
+        log(f'Temporary full-world player export completed in {time.monotonic()-export_started:.2f}s; '
+            f'{world_file.stat().st_size/1024**2:.2f} MiB (temporary)')
         rows,membership,found=choose_rows(world_file,candidates,managed[0])
         result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export,managed)
         if result is None:
