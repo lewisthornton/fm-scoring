@@ -31,7 +31,7 @@ from rangers_club import loan_state, rangers_ids
 
 DEFAULT_DB = Path(__file__).resolve().parent / "fm_rangers_scoped.sqlite3"
 DEFAULT_SLUG = "rangers-recruitment"
-META = ["Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan"]
+META = ["Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan", "Player ID"]
 POSITION_CODES = {
     "GK": ("gk",),
     "FB": ("dl", "dr", "wbl", "wbr"),
@@ -131,7 +131,8 @@ def get_database(dbpath: Path, career: str):
                 record = json.loads(row["record_json"])
             except (ValueError, TypeError) as exc:
                 raise RuntimeError(f"Invalid JSON for player {key}: {exc}") from exc
-            people[key] = {"key": key, "raw": record, "cohorts": set()}
+            people[key] = {"key": key, "raw": record, "cohorts": set(),
+                           "player_id": json.dumps(["rangers", career, key], ensure_ascii=False, separators=(",", ":"))}
         people[key]["cohorts"].add(row["cohort"])
         if row["last_seen_game_date"] and (date is None or row["last_seen_game_date"] > date):
             date = row["last_seen_game_date"]
@@ -309,7 +310,7 @@ def native_rows(records, symbol):
         r = p["raw"]
         squad = "squad" in p["cohorts"]
         loan = {"incoming": "in", "outgoing": "out", "unknown": "unknown"}.get(p.get("loan_state"), "") if squad else ""
-        rows.append({"Name": p["name"], "Club": "Rangers" if squad else p["club"], "Age": p["age"], "Left Foot": fm_foot(r),
+        rows.append({"Name": r["name"], "Player ID": p["player_id"], "Club": "Rangers" if squad else p["club"], "Age": p["age"], "Left Foot": fm_foot(r),
                      "Wage": fm_money(p["wage"], symbol) + " p/w" if p["wage"] is not None else "",
                      "Transfer Value": fm_money(p["valuation"], symbol), "Loan": loan,
                      **p["attrs"]})
