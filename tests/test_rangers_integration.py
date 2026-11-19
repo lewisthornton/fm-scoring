@@ -106,15 +106,16 @@ class IntegrationTests(unittest.TestCase):
         return set(self.db.execute("SELECT player_key, cohort FROM cohort_membership WHERE active=1"))
 
     def prepare_renderer(self):
-        for name in ("score.py", "scoring.py", "template.html", "charts.html", "theme.css"):
+        for name in ("score.py", "scoring.py", "formation.py", "template.html", "charts.html", "theme.css"):
             shutil.copyfile(ROOT / name, self.root / name)
         shutil.copytree(ROOT / "weights", self.root / "weights")
+        shutil.copytree(ROOT / "formations", self.root / "formations")
 
-    def render(self):
+    def render(self, *extra):
         result = subprocess.run(
             [sys.executable, str(ROOT / "integrations/rangers/rangers_fm_scoring_bridge.py"),
              "--fm-scoring-root", str(self.root), "--db", str(self.dbpath),
-             "--career", CAREER, "--slug", SLUG],
+             "--career", CAREER, "--slug", SLUG, *extra],
             cwd=self.root, capture_output=True, encoding="utf-8", errors="replace",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -133,6 +134,7 @@ class IntegrationTests(unittest.TestCase):
         self.prepare_renderer()
         out = self.render()
         expected = {p.name: p.read_bytes() for p in out.glob("*.html")}
+        expected_formation = (out / "formation.json").read_bytes()
         launcher = self.root / "FMAnalytics"
         launcher.mkdir()
         for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
@@ -153,20 +155,61 @@ class IntegrationTests(unittest.TestCase):
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
         self.assertEqual(standalone_db.read_bytes(), before)
 
         # An unrelated module beside the launcher must not shadow the selected
         # checkout's scorer. A missing checkout module must fail explicitly.
         (launcher / "scoring.py").write_text("raise AssertionError('wrong scorer')\n", encoding="utf-8")
+        (launcher / "formation.py").write_text("raise AssertionError('wrong formation module')\n", encoding="utf-8")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
         (self.root / "scoring.py").rename(self.root / "scoring.disabled")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Shared scoring module missing", result.stdout)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual(standalone_db.read_bytes(), before)
+
+    def test_selected_formation_sidecar_preserves_all_dashboard_outputs(self):
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+        default = json.loads((out / "formation.json").read_text(encoding="utf-8"))
+        self.assertEqual(default["name"], "Conventional 4-3-3")
+        old_html = {p.name: p.read_bytes() for p in out.glob("*.html")}
+        self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
+        selected = json.loads((out / "formation.json").read_text(encoding="utf-8"))
+        self.assertEqual(selected["name"], "Asymmetric 4-2-3-1")
+        self.assertEqual(len(selected["slots"]), 11)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, old_html)
+        before = (out / "formation.json").read_bytes()
+        self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
+        self.assertEqual((out / "formation.json").read_bytes(), before)
+
+        # Invalid input must leave the previous valid generated output intact.
+        invalid = self.root / "formations" / "invalid.toml"
+        invalid.write_text("version = 99\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "integrations/rangers/rangers_fm_scoring_bridge.py"),
+             "--fm-scoring-root", str(self.root), "--db", str(self.dbpath),
+             "--career", CAREER, "--slug", SLUG, "--formation", str(invalid)],
+            cwd=self.root, capture_output=True, encoding="utf-8", errors="replace",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Formation", result.stdout)
+        self.assertEqual((out / "formation.json").read_bytes(), before)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, old_html)
+
+    def test_watch_signature_tracks_formation_changes(self):
+        path = self.root / "chosen.toml"
+        path.write_text("invented", encoding="utf-8")
+        weights = self.root / "weights.toml"
+        before = bridge.signatures(self.dbpath, weights, path)
+        path.write_text("different length", encoding="utf-8")
+        self.assertNotEqual(bridge.signatures(self.dbpath, weights, path), before)
 
     def test_frozen_generated_output_parity(self):
         # Multiple outfield and goalkeeper targets exercise candidate ordering.
