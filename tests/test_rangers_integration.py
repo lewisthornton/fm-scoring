@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "integrations" / "rangers"))
 import rangers_autosave_watcher as watcher
 import rangers_fm_scoring_bridge as bridge
+import score as native
 
 MODEL = tomllib.loads((ROOT / "weights/fm27v2.toml").read_text(encoding="utf-8"))
 CAREER = "invented-career"
@@ -188,6 +189,9 @@ class IntegrationTests(unittest.TestCase):
             return value
 
         actual = {}
+        identified = {}
+        expected_ids = {p["name"]: json.dumps(["rangers", CAREER, watcher.identity(p)], separators=(",", ":"))
+                        for p in self.world if p is not self.unselected}
         for path in sorted(out.glob("*.html")):
             body = path.read_text(encoding="utf-8")
             if path.stem == "recruitment":
@@ -198,6 +202,16 @@ class IntegrationTests(unittest.TestCase):
                 payload = {name: json.loads(re.search(rf"const {name} = (.*?);", body).group(1))
                            for name in ("DATA", "COLS", "WEIGHTS", "WIN", "PTS", "BATCHES")}
                 payload["SITE"] = json.loads(re.search(r", SITE = (.*?), PAGES = SITE.pages;", body).group(1))
+            canonical = json.dumps(normalise(payload), sort_keys=True, separators=(",", ":"))
+            identified[path.stem] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            # The only new fields on the unambiguous fixture are an opaque
+            # player ID and the observed name on each historical player row.
+            # Verify both before comparing the complete old payload exactly.
+            if path.stem in ("squad", "players", "last"):
+                for row in payload["DATA"]:
+                    self.assertEqual(row.pop("player_id"), expected_ids[row["name"]])
+                    for snap in row["history"]:
+                        self.assertEqual(snap.pop("name"), row["name"])
             canonical = json.dumps(normalise(payload), sort_keys=True, separators=(",", ":"))
             actual[path.stem] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         # Frozen on feature/rangers-integration before extracting scoring.py.
@@ -210,6 +224,12 @@ class IntegrationTests(unittest.TestCase):
             "recruitment": "a420a8f4e2cac3243c8a7637de83d0c8fee5bdde1cd26482e479f241647015d6",
             "squad": "daaf13543eb10be4e043835695a2c1e1f90969e6621ee5eb4679c9c7bc8d4871",
             "staff": "1b88049df299a47de4ec81941b84204684cf25a02d4d81edd72b99f642c51dab",
+        })
+        self.assertEqual(identified, {
+            **{page: digest for page, digest in actual.items() if page not in ("last", "players", "squad")},
+            "last": "dac6098d2a963c2d6ed5dfc986533a3028edbc190c5db086699e7736f8eb02d0",
+            "players": "b48066a9835d5fe9b3e0edf3985eaaffc31416330420c95c86cb0ef261fff955",
+            "squad": "4a1876af70d8193a06ef3c4df0fe1b07c05643cec68c85f3343fa84ffe8d9dc7",
         })
 
     def expected_score(self, record, weights):
@@ -701,7 +721,6 @@ class IntegrationTests(unittest.TestCase):
         key = watcher.identity(outgoing)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM player_versions WHERE player_key=?", (key,)).fetchone()[0], 2)
 
-    @unittest.expectedFailure
     def test_known_namesake_does_not_split_native_history(self):
         self.process()
         self.prepare_renderer()
@@ -712,6 +731,153 @@ class IntegrationTests(unittest.TestCase):
         out = self.render()
         defender = next(p for p in self.native_data(out, "squad") if p["name"].startswith(self.cb["name"]))
         self.assertEqual(len(defender["history"]), 2)
+        target = next(p for p in self.native_data(out, "last") if p["name"] == self.cb["name"])
+        self.assertNotEqual(defender["player_id"], target["player_id"])
+        self.assertNotEqual(defender["display_name"], target["display_name"])
+        self.assertEqual(len(target["history"]), 2)
+        self.game_date = "2027-01-03"
+        self.process([])
+        out = self.render()
+        defender_after = next(p for p in self.native_data(out, "squad") if p["player_id"] == defender["player_id"])
+        self.assertEqual([h["date"] for h in defender_after["history"]], [DATE, "2027-01-02", "2027-01-03"])
+        self.assertEqual(self.native_data(out, "last"), [])
+
+    def test_target_signing_transfer_and_rename_preserve_history(self):
+        self.process()
+        self.prepare_renderer()
+        first = next(p for p in self.native_data(self.render(), "last") if p["name"] == self.target["name"])
+        self.game_date = "2027-01-02"
+        self.target.update(club_uid="100", club_name="Rangers", name="Renamed Defender", attributes_pace="20")
+        self.process()
+        out = self.render()
+        signed = next(p for p in self.native_data(out, "squad") if p["player_id"] == first["player_id"])
+        self.assertEqual(signed["name"], "Renamed Defender")
+        self.assertEqual([h["name"] for h in signed["history"]], [first["name"], signed["name"]])
+        self.assertEqual([h["club"] for h in signed["history"]], ["Invented FC", "Rangers"])
+        self.assertEqual(signed["history"][0]["CB"], first["CB"])
+        self.assertAlmostEqual(signed["CB"], self.expected_score(self.target, MODEL["outfield"]["CB"]))
+        self.assertNotIn(first["player_id"], {p["player_id"] for p in self.native_data(out, "last")})
+        self.game_date = "2027-01-03"
+        self.target.update(club_uid="300", club_name="Other Invented FC")
+        self.process()
+        out = self.render()
+        moved = next(p for p in self.native_data(out, "players") if p["player_id"] == first["player_id"])
+        self.assertEqual([h["date"] for h in moved["history"]], [DATE, "2027-01-02", "2027-01-03"])
+        self.assertEqual(moved["history"][-1]["club"], "Other Invented FC")
+
+    def test_bridge_identity_is_career_scoped(self):
+        self.process()
+        key = watcher.identity(self.cb)
+        watcher.import_selection(self.db, "other-career", self.source, "other", "filter",
+                                 {"game_date": DATE}, {key: self.cb}, {key: {"squad"}}, None, ("100", "800"))
+        first = next(p for p in bridge.get_database(self.dbpath, CAREER)[0] if p["key"] == key)
+        second, = bridge.get_database(self.dbpath, "other-career")[0]
+        self.assertEqual(first["key"], second["key"])
+        self.assertNotEqual(first["player_id"], second["player_id"])
+        self.assertEqual(json.loads(first["player_id"]), ["rangers", CAREER, key])
+        self.assertEqual(json.loads(second["player_id"]), ["rangers", "other-career", key])
+
+    def test_native_save_identity_is_save_scoped_and_independent_of_name(self):
+        first = native.save_player_id("career-a", self.cb)
+        renamed = dict(self.cb, name="Renamed", club_uid="999", club_name="Other FC")
+        self.assertEqual(native.save_player_id("career-a", renamed), first)
+        self.assertNotEqual(native.save_player_id("career-b", self.cb), first)
+        self.assertNotEqual(native.save_player_id("career-a", self.target), first)
+        self.assertEqual(native.save_player_id("career-a", {}), "")
+
+    def test_legacy_screenshot_aliases_and_blank_identity_preserve_name_history(self):
+        folder = self.root / "observations"
+        folder.mkdir()
+        attrs = dict.fromkeys(MODEL["outfield"]["CB"], 12)
+        write_csv(folder / "2027-01-01_my-club_outfield.csv",
+                  [{"Name": "Short Name", "Club": "Rangers", "Age": "25", **attrs}])
+        write_csv(folder / "2027-01-02_my-club_outfield.csv",
+                  [{"Name": "Full Name", "Player ID": "", "Club": "Rangers", "Age": "25", "Pace": 18}])
+        players, files = native.load_players(folder, {"Short Name": "Full Name"})
+        self.assertEqual(set(players), {"Full Name"})
+        row = native.player_row("Full Name", players["Full Name"], MODEL)
+        self.assertNotIn("player_id", row)
+        self.assertEqual([h["date"] for h in row["history"]], [DATE, "2027-01-02"])
+        self.assertEqual(row["history"][0]["CB"], 12)
+        self.assertGreater(row["CB"], 12)
+        self.assertEqual(players["Full Name"]["files"], set(files))
+
+    def test_mixed_legacy_and_stable_namesakes_same_date_sources(self):
+        folder = self.root / "observations"
+        folder.mkdir()
+        attrs = dict.fromkeys(MODEL["outfield"]["CB"], 12)
+        a, b = "source-a:123", "source-b:123"
+        common = {"Name": "Same Name", "Club": "Rangers", "Age": "25"}
+        write_csv(folder / "2027-01-01_my-club_outfield.csv",
+                  [{**common, **attrs}, {**common, **attrs, "Player ID": a},
+                   {**common, **attrs, "Player ID": b, "Pace": 16}])
+        write_csv(folder / "2027-01-01_search-secondary_outfield.csv",
+                  [{**common, "Player ID": a, "Pace": 20}])
+        players, files = native.load_players(folder)
+        self.assertEqual(set(players), {"Same Name", ("id", a), ("id", b)})
+        self.assertEqual(len(players[("id", a)]["files"]), 2)
+        self.assertEqual(len(files), 2)
+        rows = [native.player_row(k, p, MODEL) for k, p in players.items()]
+        native.label_namesakes(rows)
+        self.assertEqual(len({r["display_name"] for r in rows}), 3)
+        stable = {r["player_id"]: r for r in rows if "player_id" in r}
+        self.assertEqual(stable[a]["history"][0]["attrs"]["Pace"], 20)
+        self.assertEqual(stable[b]["history"][0]["attrs"]["Pace"], 16)
+        self.assertEqual(len(stable[a]["history"]), 1)
+        for row in rows:
+            self.assertNotIn("Player ID", row["history"][0]["attrs"])
+        selectors = native.player_selectors(players)
+        with self.assertRaisesRegex(SystemExit, "ambiguous"):
+            native.resolve_players(["Same Name"], players, selectors, strict=True)
+        self.assertEqual(native.resolve_players(["id:" + b], players, selectors, strict=True), {("id", b)})
+
+    def test_native_last_batch_selects_exact_namesake_identity(self):
+        self.target["name"] = self.cb["name"]
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+        target, = [p for p in self.native_data(out, "last") if p["name"] == self.cb["name"]]
+        cfg = self.root / "saves" / SLUG / "save.toml"
+        with cfg.open("a", encoding="utf-8") as stream:
+            stream.write("\nlast_names = [" + json.dumps("id:" + target["player_id"]) + "]\n")
+        result = subprocess.run([sys.executable, "score.py", "--save", SLUG], cwd=self.root,
+                                capture_output=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([p["player_id"] for p in self.native_data(out, "last")], [target["player_id"]])
+
+    def test_existing_legacy_csv_survives_identified_refresh(self):
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+        folder = self.root / "saves" / SLUG / "obs"
+        legacy = folder / "2026-12-31_my-club_outfield.csv"
+        write_csv(legacy, [{"Name": self.cb["name"], "Club": "Rangers", "Age": "26",
+                            **dict.fromkeys(MODEL["outfield"]["CB"], 12)}])
+        before = legacy.read_bytes()
+        self.render()
+        squad, = [p for p in self.native_data(out, "squad") if p["name"] == self.cb["name"]]
+        old, = [p for p in self.native_data(out, "players") if p["name"] == self.cb["name"]]
+        self.assertIn("player_id", squad)
+        self.assertNotIn("player_id", old)
+        self.assertEqual(old["history"][0]["date"], "2026-12-31")
+        self.assertEqual(old["CB"], 12)
+        self.assertEqual(legacy.read_bytes(), before)
+
+    def test_public_league_export_drops_private_player_id(self):
+        folder = self.root / "saves" / SLUG / "obs"
+        folder.mkdir(parents=True)
+        source = folder / "2027-01-01_search-invented_outfield.csv"
+        write_csv(source, [{"Name": f"Private Name {i}", "Player ID": f"private:{i}",
+                            "Club": "Invented FC", "Division": "Invented League", "Age": "25",
+                            "Pace": 12} for i in range(native.MIN_DIVISION)])
+        leagues = self.root / "leagues"
+        with patch.object(native, "ROOT", self.root), patch.object(native, "LEAGUES", leagues):
+            native.share_leagues(SLUG)
+        shared, = leagues.glob("*.csv")
+        with shared.open(newline="", encoding="utf-8") as stream:
+            reader = csv.DictReader(stream)
+            self.assertNotIn("Player ID", reader.fieldnames)
+            self.assertTrue(all(row["Name"].startswith("Invented FC ") for row in reader))
 
 
 if __name__ == "__main__":
