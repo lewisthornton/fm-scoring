@@ -106,7 +106,7 @@ class IntegrationTests(unittest.TestCase):
         return set(self.db.execute("SELECT player_key, cohort FROM cohort_membership WHERE active=1"))
 
     def prepare_renderer(self):
-        for name in ("score.py", "scoring.py", "formation.py", "template.html", "charts.html", "theme.css"):
+        for name in ("score.py", "scoring.py", "formation.py", "tactical_assessment.py", "template.html", "charts.html", "theme.css"):
             shutil.copyfile(ROOT / name, self.root / name)
         shutil.copytree(ROOT / "weights", self.root / "weights")
         shutil.copytree(ROOT / "formations", self.root / "formations")
@@ -135,6 +135,7 @@ class IntegrationTests(unittest.TestCase):
         out = self.render()
         expected = {p.name: p.read_bytes() for p in out.glob("*.html")}
         expected_formation = (out / "formation.json").read_bytes()
+        expected_assessments = (out / "tactical_assessments.json").read_bytes()
         launcher = self.root / "FMAnalytics"
         launcher.mkdir()
         for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
@@ -156,16 +157,19 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
+        self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
         self.assertEqual(standalone_db.read_bytes(), before)
 
         # An unrelated module beside the launcher must not shadow the selected
         # checkout's scorer. A missing checkout module must fail explicitly.
         (launcher / "scoring.py").write_text("raise AssertionError('wrong scorer')\n", encoding="utf-8")
         (launcher / "formation.py").write_text("raise AssertionError('wrong formation module')\n", encoding="utf-8")
+        (launcher / "tactical_assessment.py").write_text("raise AssertionError('wrong assessment module')\n", encoding="utf-8")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
+        self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
         (self.root / "scoring.py").rename(self.root / "scoring.disabled")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertNotEqual(result.returncode, 0)
@@ -178,16 +182,24 @@ class IntegrationTests(unittest.TestCase):
         self.prepare_renderer()
         out = self.render()
         default = json.loads((out / "formation.json").read_text(encoding="utf-8"))
+        default_assessment = json.loads((out / "tactical_assessments.json").read_text(encoding="utf-8"))
         self.assertEqual(default["name"], "Conventional 4-3-3")
         old_html = {p.name: p.read_bytes() for p in out.glob("*.html")}
         self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
         selected = json.loads((out / "formation.json").read_text(encoding="utf-8"))
+        assessment = json.loads((out / "tactical_assessments.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(assessment["formation"]["sha256"], default_assessment["formation"]["sha256"])
+        self.assertEqual(assessment["formation"]["name"], selected["name"])
+        right_back = next(s for s in assessment["players"][0]["slots"] if s["slot_id"] == "rb")
+        self.assertEqual((right_back["ip"]["position"], right_back["oop"]["position"]), ("dc", "dr"))
         self.assertEqual(selected["name"], "Asymmetric 4-2-3-1")
         self.assertEqual(len(selected["slots"]), 11)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, old_html)
         before = (out / "formation.json").read_bytes()
+        before_assessment = (out / "tactical_assessments.json").read_bytes()
         self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
         self.assertEqual((out / "formation.json").read_bytes(), before)
+        self.assertEqual((out / "tactical_assessments.json").read_bytes(), before_assessment)
 
         # Invalid input must leave the previous valid generated output intact.
         invalid = self.root / "formations" / "invalid.toml"
@@ -201,7 +213,67 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Formation", result.stdout)
         self.assertEqual((out / "formation.json").read_bytes(), before)
+        self.assertEqual((out / "tactical_assessments.json").read_bytes(), before_assessment)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, old_html)
+
+    def test_tactical_assessment_scoped_identity_availability_and_provenance(self):
+        self.target["name"] = self.cb["name"]
+        self.cb.update(positions_dl="20", positions_dr="4")
+        self.target.update(positions_dr="20", positions_dc="2")
+        incoming = player(30, "Fixture Incoming", squad=True)
+        incoming.update(on_loan="true", loan_parent_club_uid="200")
+        outgoing = player(31, "Fixture Outgoing")
+        outgoing.update(on_loan="true", loan_parent_club_uid="100")
+        unknown = player(32, "Fixture Unknown", squad=True)
+        unknown.update(on_loan="")
+        self.world.extend([incoming, outgoing, unknown])
+        self.process()
+        self.game_date = "2027-01-03"
+        self.process()
+        # Same numeric identity in a separate career may never leak into this report.
+        other = dict(self.cb, name="Other career private name")
+        key = watcher.identity(other)
+        watcher.import_selection(self.db, "other-career", self.source, "other", "filter",
+                                 {"game_date": DATE}, {key: other}, {key: {"squad"}}, None, ("100", "800"))
+        before = self.dump()
+        self.prepare_renderer()
+        out = self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
+        path = out / "tactical_assessments.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["career"], CAREER)
+        self.assertEqual(data["game_date"], self.game_date)
+        self.assertIsNone(data["observed_role_suitability_source"])
+        model_bytes = (self.root / "weights/fm27v2.toml").read_bytes()
+        self.assertEqual(data["scoring_model"]["sha256"], hashlib.sha256(model_bytes).hexdigest())
+        selected = json.loads((out / "formation.json").read_text(encoding="utf-8"))
+        canonical = json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        self.assertEqual(data["formation"]["sha256"], hashlib.sha256(canonical.encode("utf-8")).hexdigest())
+        expected = {json.dumps(["rangers", CAREER, watcher.identity(p)], separators=(",", ":"))
+                    for p in self.world if p is not self.unselected}
+        self.assertEqual({p["player_id"] for p in data["players"]}, expected)
+        self.assertEqual(len(data["players"]), 7)
+        namesakes = [p for p in data["players"] if p["name"] == self.cb["name"]]
+        self.assertEqual(len(namesakes), 2)
+        self.assertEqual(len({p["display_name"] for p in namesakes}), 2)
+        self.assertTrue(all(p["record_game_date"] == DATE and p["last_seen_game_date"] == self.game_date
+                            for p in data["players"]))
+        states = {p["name"]: (p["availability"], p["loan_state"]) for p in data["players"]}
+        self.assertEqual(states[incoming["name"]], ("available", "incoming"))
+        self.assertEqual(states[outgoing["name"]], ("unavailable", "outgoing"))
+        self.assertEqual(states[unknown["name"]], ("unknown", "unknown"))
+        defender = next(p for p in data["players"] if json.loads(p["player_id"])[2] == watcher.identity(self.cb))
+        cb_slot = next(s for s in defender["slots"] if s["slot_id"] == "lcb")
+        self.assertEqual(cb_slot["attribute_profile_score"], self.expected_score(self.cb, MODEL["outfield"]["CB"]))
+        keeper = next(p for p in data["players"] if p["name"] == self.gk["name"])
+        gk_slot = next(s for s in keeper["slots"] if s["slot_id"] == "gk")
+        self.assertEqual(gk_slot["attribute_profile_score"], self.expected_score(self.gk, MODEL["gk"]))
+        for p in data["players"]:
+            self.assertEqual(len(p["slots"]), 11)
+            self.assertTrue(all(s["player_id"] == p["player_id"] and s["availability"] == p["availability"]
+                                for s in p["slots"]))
+        self.assertNotIn(self.unselected["name"], path.read_text(encoding="utf-8"))
+        self.assertNotIn(other["name"], path.read_text(encoding="utf-8"))
+        self.assertEqual(self.dump(), before)
 
     def test_watch_signature_tracks_formation_changes(self):
         path = self.root / "chosen.toml"
