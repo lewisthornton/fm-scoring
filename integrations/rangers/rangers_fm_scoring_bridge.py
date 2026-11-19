@@ -528,6 +528,13 @@ def sync_once(args, root):
     xi = xi_module.build_optimal_xi(formation, assessment, benchmark, policy=policy)
     depth_module = load_checkout_module(root, "squad_depth.py", "Squad depth")
     depth = depth_module.build_squad_depth(formation, assessment, benchmark, optimizer=xi_module, policy=policy, baseline=xi)
+    signing_module = load_checkout_module(root, "signing_simulations.py", "Signing simulations")
+    observations = {p["player_id"]: {"attributes": p["attrs"], "source": "fmsave player export (original units)",
+                                     "raw_fields": {k: v for k, v in sorted(p["raw"].items()) if k.startswith(("attributes_", "contract_", "transfer_value")) or k in ("club_uid", "club_name", "on_loan", "loan_parent_club_uid")}}
+                    for p in people if "target" in p["cohorts"]}
+    signing = signing_module.build_signing_simulations(formation, assessment, benchmark, optimizer=xi_module,
+        depth_module=depth_module, policy=policy, baseline=xi, baseline_depth=depth,
+        depth_limit=getattr(args, "signing_depth_limit", signing_module.DEFAULT_DEPTH_LIMIT), observations=observations)
     outdir = root / "out" / args.slug
     # Publish the honest partial XI even if the legacy renderer cannot score
     # a goalkeeper or has no active squad. Legacy failure semantics remain.
@@ -535,6 +542,8 @@ def sync_once(args, root):
     write_atomic(outdir / "optimal_xi.html", xi_module.render_html(xi))
     write_atomic(outdir / "squad_depth.json", json.dumps(depth, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     write_atomic(outdir / "squad_depth.html", depth_module.render_html(depth))
+    write_atomic(outdir / "signing_simulations.json", json.dumps(signing, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+    write_atomic(outdir / "signing_simulations.html", signing_module.render_html(signing))
     if not people:
         raise RuntimeError(f"No active squad or targets for career {args.career!r}. Run the autosave watcher first.")
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
@@ -570,6 +579,7 @@ def sync_once(args, root):
     log(f"League benchmarks: {outdir / 'league_benchmarks.json'} ({benchmark['status']})")
     log(f"Starting XI: {outdir / 'optimal_xi.html'} ({xi['solver']['status']})")
     log(f"Squad depth: {outdir / 'squad_depth.html'}")
+    log(f"Signing simulations: {outdir / 'signing_simulations.html'} ({len(signing['candidates'])} targets)")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
@@ -600,12 +610,15 @@ def main(argv=None):
     ap.add_argument("--currency", default="£", help="Display symbol ONLY (does not convert save monetary units)")
     ap.add_argument("--formation", type=Path, help="Tactical TOML file (default: selected checkout's formations/default.toml)")
     ap.add_argument("--xi-policy", type=Path, help="Optional starting-XI eligibility policy JSON")
+    ap.add_argument("--signing-depth-limit", type=int, default=12, help="Maximum targets receiving detailed signing-depth analysis (0 disables only depth)")
     ap.add_argument("--watch", action="store_true", help="Refresh continuously when SQLite database changes")
     ap.add_argument("--interval", type=float, default=15, help="Watch polling interval in seconds")
     ap.add_argument("--open", action="store_true", help="Open the dashboard in the default browser")
     args = ap.parse_args(argv)
     if args.interval <= 0:
         ap.error("--interval must be positive")
+    if args.signing_depth_limit < 0:
+        ap.error("--signing-depth-limit must be nonnegative")
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", args.slug):
         ap.error("--slug must be a simple directory name")
     root = find_root(args.fm_scoring_root)
