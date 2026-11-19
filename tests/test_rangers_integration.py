@@ -127,6 +127,46 @@ class IntegrationTests(unittest.TestCase):
         body = (directory / "recruitment.html").read_text(encoding="utf-8")
         return json.loads(re.search(r'<script id="dataset" type="application/json">(.*?)</script>', body).group(1))
 
+    def test_standalone_bridge_uses_explicit_checkout_and_default_database(self):
+        self.process()
+        self.prepare_renderer()
+        out = self.render()
+        expected = {p.name: p.read_bytes() for p in out.glob("*.html")}
+        launcher = self.root / "FMAnalytics"
+        launcher.mkdir()
+        for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
+            shutil.copyfile(ROOT / "integrations/rangers" / name, launcher / name)
+        # Model the standalone Windows installation with its database beside
+        # the launcher and the scoring module only in the selected checkout.
+        standalone_db = launcher / "fm_rangers_scoped.sqlite3"
+        copy = sqlite3.connect(standalone_db)
+        try:
+            self.db.backup(copy)
+        finally:
+            copy.close()
+        before = standalone_db.read_bytes()
+        command = [
+            sys.executable, str(launcher / "rangers_fm_scoring_bridge.py"),
+            "--fm-scoring-root", str(self.root), "--career", CAREER, "--slug", SLUG,
+        ]
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual(standalone_db.read_bytes(), before)
+
+        # An unrelated module beside the launcher must not shadow the selected
+        # checkout's scorer. A missing checkout module must fail explicitly.
+        (launcher / "scoring.py").write_text("raise AssertionError('wrong scorer')\n", encoding="utf-8")
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        (self.root / "scoring.py").rename(self.root / "scoring.disabled")
+        result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Shared scoring module missing", result.stdout)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
+        self.assertEqual(standalone_db.read_bytes(), before)
+
     def test_frozen_generated_output_parity(self):
         # Multiple outfield and goalkeeper targets exercise candidate ordering.
         self.world.extend([player(20, "Fixture Alternate Defender"),
