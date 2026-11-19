@@ -1,0 +1,105 @@
+version = 1
+name = "Asymmetric 4-2-3-1"
+
+[phase_weights]
+ip = 0.65
+oop = 0.35
+
+[[slots]]
+id = "gk"
+label = "Goalkeeper"
+side = "centre"
+positions = ["gk"]
+profile = "GK"
+ip = { position = "gk", role = "Distributor" }
+oop = { position = "gk", role = "Conservative goalkeeper" }
+
+[[slots]]
+id = "lb"
+label = "Attacking left-back"
+side = "left"
+positions = ["dl", "wbl"]
+profile = "FB"
+ip = { position = "wbl", role = "Overlap and cross" }
+oop = { position = "dl", role = "Recover to back four" }
+
+[[slots]]
+id = "lcb"
+label = "Left centre-back"
+side = "left"
+positions = ["dc", "sw"]
+profile = "CB"
+ip = { position = "dc", role = "Progressive defender" }
+oop = { position = "dc", role = "Cover defender" }
+
+[[slots]]
+id = "rcb"
+label = "Right centre-back"
+side = "right"
+positions = ["dc", "sw"]
+profile = "CB"
+ip = { position = "dc", role = "Build-up defender" }
+oop = { position = "dc", role = "Stopper" }
+
+[[slots]]
+id = "rb"
+label = "Conservative right-back"
+side = "right"
+positions = ["dr", "wbr"]
+profile = "FB"
+ip = { position = "dc", role = "Stay back in third centre-back lane" }
+oop = { position = "dr", role = "Hold defensive flank" }
+
+[[slots]]
+id = "ldm"
+label = "Left pivot"
+side = "left"
+positions = ["dm", "mc"]
+profile = "6"
+ip = { position = "dm", role = "Screen rest defence" }
+oop = { position = "dm", role = "Holding midfielder" }
+
+[[slots]]
+id = "rdm"
+label = "Right pivot"
+side = "right"
+positions = ["dm", "mc"]
+profile = "6"
+ip = { position = "mc", role = "Progressive pivot" }
+oop = { position = "dm", role = "Pressing pivot" }
+
+[[slots]]
+id = "lw"
+label = "Left attacker"
+side = "left"
+positions = ["aml", "ml"]
+profile = "wing"
+ip = { position = "amc", side = "left", role = "Inside runner" }
+oop = { position = "ml", role = "Wide defensive midfielder" }
+
+[[slots]]
+id = "am"
+label = "Central attacking midfielder"
+side = "centre"
+positions = ["amc", "mc"]
+profile = "10"
+ip = { position = "amc", role = "Custom pocket creator" }
+oop = { position = "mc", role = "Support midfield press" }
+
+[[slots]]
+id = "rw"
+label = "Right attacker"
+side = "right"
+positions = ["amr", "mr"]
+profile = "wing"
+ip = { position = "amr", role = "Hold attacking width" }
+oop = { position = "mr", role = "Wide defensive midfielder" }
+
+[[slots]]
+id = "st"
+label = "Striker"
+side = "centre"
+positions = ["stc"]
+profile = "9"
+ip = { position = "stc", role = "Lead line" }
+oop = { position = "stc", role = "Screen opposition pivot" }
