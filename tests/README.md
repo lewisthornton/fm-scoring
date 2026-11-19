@@ -25,9 +25,49 @@ in one transaction. Older dates are skipped and same-date filter changes remain
 valid. New imports require a calendar-valid YYYY-MM-DD game date; a missing or
 invalid date triggers an import error without modifying existing records.
 
-Two tests deliberately use unittest's expectedFailure marker:
+## Managed club and loan evidence
 
-- Loan direction: an incoming loan is exported as outgoing.
+The watcher exports `managed-clubs --all` and verifies its single Rangers row
+against `clubs --club <uid>`. Each career binds the save-local club UID and,
+when present, manager staff UID in the additive `career_club` table in the same
+transaction as chronology and memberships. Existing databases bind on the first
+accepted import after reconciling their active squad's named club identifiers;
+conflicting or absent legacy evidence requires review. The bridge can still read
+unmigrated databases, using a single unambiguous legacy club UID if present.
+
+According to fmsave's
+[Player model](https://github.com/rhiever/fmsave/blob/main/src/fmsave/models/players.py),
+`club_uid` is the club fielding the registered team and `loan_parent_club_uid`
+is the club of the contract in effect when `on_loan` is true. The
+[CLI](https://github.com/rhiever/fmsave/blob/main/src/fmsave/cli.py)
+filters `--managed-club` by current club UID only, so the watcher now reads the
+full player export transiently even without F9 targets to retain outgoing loans.
+Only the relevant squad and matched targets are persisted. This may increase
+the time needed for squad-only refreshes. The watcher logs the transient
+world export's elapsed time and size on each successful extraction.
+
+Club-level starting-XI eligibility is confirmed for permanent and incoming
+players whose current club is Rangers; outgoing loans are unavailable.
+Missing/conflicting evidence is unknown, and must be explicitly resolved before
+including a player in a confirmed XI. Injury, suspension, match registration
+and tactical suitability are separate and not inferred here. Squad membership
+includes owned players away on loan and possible owned players with a matching
+parent UID but missing or contradictory loan evidence. These remain unknown
+until verified. Native CSV retains the Loan column (blank,
+in, out, or unknown); Club remains Rangers for the managed roster, as upstream
+does. Dashboard JSON separately retains actual club and loan/availability state.
+Existing score formulas and ranking order are retained. The comparison baseline
+requires confirmed club-level availability. Familiar, scoreable players with
+unknown availability are listed separately per role and excluded from uplift.
+Without a confirmed incumbent, uplift and attribute comparisons remain undefined.
+
+fmsave documents the managed-club link as confirmed only for single-human
+manager saves, and some club/parent identifiers are unconfirmed fields. The
+integration cannot distinguish two separate careers with identical club and
+manager identifiers, or verify actual match eligibility from these exports.
+
+One test deliberately uses unittest's expectedFailure marker:
+
 - Identity: a newly active namesake changes the native CSV display key and splits
   existing history.
 
