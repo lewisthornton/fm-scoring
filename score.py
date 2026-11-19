@@ -31,7 +31,7 @@ from scoring import PTS_LEVELS, curve_scores, curve_value, pts_score, pts_value,
 ROOT = Path(__file__).parent
 CONFIG = ROOT / "config.toml"
 PAGES = ["squad", "players", "last", "staff", "last_staff", "charts", "filters"]  # keys 1-7, in this order
-META = {"Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan", "Minutes", "Rating", "Division"}  # every other column is an attribute
+META = {"Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan", "Minutes", "Rating", "Division", "Player ID"}  # every other column is an attribute
 STAFF_META = {"Name", "Club", "Age", "Job", "Personality"}
 LEFT_FOOTED = {"Fairly Strong", "Strong", "Very Strong"}
 PARTIAL_SQUAD = re.compile(r"-(u\d+s?|reserves|first-team)$")  # source of a youth/reserve/first-team squad screen: not the whole club
@@ -73,18 +73,25 @@ def read_rows(folder):
 # --- players ---
 
 def load_players(obs_dir, aliases=None):
-    """Every observation row, grouped by player name (truncated names via `aliases` to the full one) and then game date;
-    plus each file's date, source and clubs."""
+    """Group by optional opaque Player ID, otherwise legacy aliased name, then date.
+
+    The tuple key keeps identified observations separate from all legacy names.
+    """
     players, files = {}, {}
     for path, row in read_rows(obs_dir):
-        row["Name"] = (aliases or {}).get(row["Name"], row["Name"])
+        identifier = (row.get("Player ID") or "").strip()
+        if not identifier:
+            row["Name"] = (aliases or {}).get(row["Name"], row["Name"])
         date, source, view = path.stem[:10], path.stem[11:].rsplit("_", 1)[0], path.stem.rsplit("_", 1)[1]
         files.setdefault(path.name, {"date": date, "source": source, "clubs": set()})["clubs"].add(row["Club"])
-        p = players.setdefault(row["Name"], {"keeper": False, "files": set(), "dates": {}})
+        key = ("id", identifier) if identifier else row["Name"]
+        p = players.setdefault(key, {"keeper": False, "files": set(), "dates": {}})
         p["keeper"] |= view == "gk"  # anyone in a GK view is a keeper
         p["files"].add(path.name)
         snap = p["dates"].setdefault(date, {"attrs": {}})
         snap.update(club=row["Club"], age=int(row["Age"]))
+        if identifier:
+            snap["name"] = row["Name"]
         if row.get("Left Foot"):
             snap["leftFoot"] = row["Left Foot"]
         if row.get("Wage"):
@@ -104,6 +111,9 @@ def load_players(obs_dir, aliases=None):
 
 def player_row(name, p, w):
     """A player's latest state, plus their history: one entry per observation date."""
+    identifier = name[1] if isinstance(name, tuple) else None
+    if identifier:
+        name = p["dates"][max(p["dates"])]["name"]
     positions = {"GK": w["gk"]} if p["keeper"] else w["outfield"]
     ages = sorted(int(a) for a in w["age_benchmark"])
     known = {"leftFoot": None, "wage": None, "value": (None, None), "loan": None}
@@ -120,16 +130,63 @@ def player_row(name, p, w):
                         "pts": pts_score(attrs, w) if p["keeper"] else None, "best": best, "score": scores[best], "vsAge": scores[best] / bench,
                         "minutes": snap.get("minutes"), "rating": snap.get("rating"), "division": snap.get("division"),
                         "attrs": attrs})
+        if identifier:
+            history[-1]["name"] = snap["name"]
     if not history or history[-1]["date"] != max(p["dates"]):
         raise SystemExit(f"{name}: not enough attributes to score any position on {max(p['dates'])}")
     latest = history[-1]
     return {
         "name": name,
+        **({"player_id": identifier} if identifier else {}),
         **{k: v for k, v in latest.items() if k not in ("date", "leftFoot", "attrs")},  # rating: latest observation only
         "left": None if known["leftFoot"] is None else "yes" if known["leftFoot"] in LEFT_FOOTED else "no",
         "loan": known["loan"], "wage": known["wage"], "valueLo": known["value"][0], "value": known["value"][1],  # value sorts on the top of FM's range
         "history": history,
     }
+
+
+def observation_key(row):
+    return ("id", row["player_id"]) if "player_id" in row else row["name"]
+
+
+def player_selectors(players):
+    """Index legacy name selectors and all observed names; explicit id: selectors are exact."""
+    names = {}
+    for key, player in players.items():
+        observed = {snap["name"] for snap in player["dates"].values()} if isinstance(key, tuple) else {key}
+        for name in observed:
+            names.setdefault(name, set()).add(key)
+    return names
+
+
+def resolve_players(values, players, names, *, strict=False, allow_missing=False):
+    keys = set()
+    for value in values:
+        explicit = ("id", value[3:]) if value.startswith("id:") else None
+        matches = {explicit} if explicit in players else names.get(value, set())
+        if len(matches) == 1:
+            keys.update(matches)
+        elif strict and (matches or not allow_missing):
+            raise SystemExit(f"Player selector {value!r} is {'ambiguous; use id:<Player ID>' if matches else 'not observed'}")
+    return keys
+
+
+def label_namesakes(rows):
+    """Disambiguate presentation only, across all observed players."""
+    groups = {}
+    for row in rows:
+        groups.setdefault(row["name"], []).append(row)
+    used = set(groups)
+    for group in groups.values():
+        if len(group) > 1:
+            index = 1
+            for row in group:
+                label = f"{row['name']} [{index}]"
+                while label in used:
+                    index += 1
+                    label = f"{row['name']} [{index}]"
+                row["display_name"] = label
+                used.add(label)
 
 
 def player_cols(w, with_club, with_rating=None):
@@ -165,7 +222,7 @@ def filters(squad, w):
             rows.append({"attr": attr, "weight": weight, "values": values,
                          "min": int(sum(values) / len(values) + 0.5) if weight >= SEARCH_MIN_WEIGHT else None})
         out.append({"pos": pos, "rows": rows,
-                    "players": [{"name": r["name"], "age": r["age"], "score": r[pos]} for r in ranked]})
+                    "players": [{"name": r.get("display_name", r["name"]), "age": r["age"], "score": r[pos]} for r in ranked]})
     return out
 
 
@@ -227,7 +284,7 @@ def charts(rows, squad, w, cfg):
     for r, mine, ref in [*((r, False, False) for r in rows if r["division"] is not None and r not in squad), *((r, True, False) for r in squad),
                          *((r, False, True) for r in shared if r["division"] not in own)]:
         attrs = r["history"][-1]["attrs"]
-        out.append({"name": r["name"], "club": r["club"], "division": r["division"], "age": r["age"], "squad": mine, "ref": ref, "wage": r["wage"],
+        out.append({"name": r.get("display_name", r["name"]), "club": r["club"], "division": r["division"], "age": r["age"], "squad": mine, "ref": ref, "wage": r["wage"],
                     "rating": r["rating"], "minutes": r["minutes"], "best": r["best"], "win": r["win"], "pts": r.get("pts"),
                     "scores": {p: r[p] for p in ["GK", *w["outfield"]] if r.get(p) is not None},
                     **{a: attrs.get(a) for a in CHART_ATTRS}})
@@ -322,7 +379,15 @@ def world_positions(save_dir, managed):
     files = world_files(save_dir)
     if not files:
         return {}
-    return {(r["name"], r["club"]): r["positions"] for r in read_world(files[-1])[1] if r.get("positions")}
+    positions, seen = {}, set()
+    for r in read_world(files[-1])[1]:
+        key = (r["name"], r["club"])
+        if key in seen:
+            positions.pop(key, None)
+        elif r.get("positions"):
+            positions[key] = r["positions"]
+        seen.add(key)
+    return positions
 
 
 def world_charts(save_dir, w, managed):
@@ -493,10 +558,21 @@ def build(save):
 
     players, obs_files = load_players(save_dir / "obs", cfg.get("aliases"))
     rows = [player_row(n, p, w) for n, p in players.items()]
+    label_namesakes(rows)
+    names = player_selectors(players)
+    selected = {key: resolve_players(cfg.get(key, []), players, names, strict=True)
+                for key in ("last_names", "released", "signed", "recalled")}
+    selected["intake_kept"] = resolve_players(cfg.get("intake_kept", []), players, names, strict=True, allow_missing=True)
     positions = world_positions(save_dir, managed)
+    # Without a shared world/observation ID contract, name/club matches must
+    # be unique on both sides before attaching positions.
+    position_counts = {}
     for r in rows:
-        r["pos"] = positions.get((r["name"], r["club"]))
-    check_listed(cfg, "last_names", players.keys(), "has players never observed")
+        key = (r["name"], r["club"])
+        position_counts[key] = position_counts.get(key, 0) + 1
+    for r in rows:
+        key = (r["name"], r["club"])
+        r["pos"] = positions.get(key) if position_counts[key] == 1 else None
     check_listed(cfg, "last_batch", set(obs_files), "names files with no players")
 
     # Anyone at the managed club but missing from its latest squad screen has left (sold, released).
@@ -504,24 +580,21 @@ def build(save):
     squad_date = max((f["date"] for f in obs_files.values() if not f["source"].startswith("search-")
                       and not PARTIAL_SQUAD.search(f["source"]) and managed in f["clubs"]), default="")
     # ...as has anyone in save.toml's `released` (sold or released since the latest squad screen)
-    check_listed(cfg, "released", players.keys(), "has players never observed")
     for r in rows:
-        if r["club"] == managed and (r["history"][-1]["date"] < squad_date or r["name"] in cfg.get("released", [])):
+        if r["club"] == managed and (r["history"][-1]["date"] < squad_date or observation_key(r) in selected["released"]):
             r["club"] = f"left {managed}"
     # ...and anyone in `signed` (signed since the latest squad screen) has joined, until a newer squad screen leaves them out
-    check_listed(cfg, "signed", players.keys(), "has players never observed")
     for r in rows:
-        if r["name"] in cfg.get("signed", []) and r["history"][-1]["date"] >= squad_date:
+        if observation_key(r) in selected["signed"] and r["history"][-1]["date"] >= squad_date:
             r["club"] = managed
     # ...and anyone in `recalled` is back from loan (clears the "out" flag until the next squad screen)
-    check_listed(cfg, "recalled", players.keys(), "has players never observed")
     for r in rows:
-        if r["name"] in cfg.get("recalled", []) and r["loan"] == "out":
+        if observation_key(r) in selected["recalled"] and r["loan"] == "out":
             r["loan"] = None
     squad = [r for r in rows if r["club"] == managed]
     # Youth team: the player's latest screen of the club's own squad was a youth team's (`my-club-u18s` → "U18")
     for r in squad:
-        own = [obs_files[f] for f in players[r["name"]]["files"] if not obs_files[f]["source"].startswith("search-")]
+        own = [obs_files[f] for f in players[observation_key(r)]["files"] if not obs_files[f]["source"].startswith("search-")]
         m = own and YOUTH_TEAM.search(max(own, key=lambda f: f["date"])["source"])
         r["team"] = m.group(1).upper() if m else None
     # The latest youth intake: players in the newest obs file(s) whose source mentions "intake", until a squad screen
@@ -531,8 +604,8 @@ def build(save):
               if any(obs_files[f]["date"] == intake_date and "intake" in obs_files[f]["source"] for f in p["files"])
               and not any(obs_files[f]["date"] >= intake_date and not obs_files[f]["source"].startswith("search-") for f in p["files"])}
     # Until then they're candidates, not the squad: only last shows them, unless kept (`intake_kept`)
-    kept = set(cfg.get("intake_kept", []))
-    signed_up = [r for r in squad if r["name"] not in intake - kept]
+    kept = selected["intake_kept"]
+    signed_up = [r for r in squad if observation_key(r) not in intake - kept]
 
     roles = w.get("staff", {})
     staff = load_staff(save_dir / "staff", w.get("staff_words", {}))
@@ -556,8 +629,8 @@ def build(save):
         "players": world_page(save_dir, w, managed) or (player_cols(w, True), [r for r in rows if r["club"] != managed]),
         # a screenshot of just names (e.g. a shortlist) picks players already observed; otherwise the batch's files
         "last": (player_cols(w, True, with_rating=False), *batched(rows, recent_batches(save, cfg, "last_batch", "last_names"),
-                                                lambda r, files, names: r["name"] in names if names
-                                                else bool(players[r["name"]]["files"] & files))),
+                                                lambda r, files, batch_names: observation_key(r) in resolve_players(batch_names, players, names) if batch_names
+                                                else bool(players[observation_key(r)]["files"] & files))),
         "staff": (staff_cols(roles), staff_rows),
         # the batch's files, plus anyone named in last_staff_names
         "last_staff": (staff_cols(roles), *batched(staff_rows, recent_batches(save, cfg, "last_staff_batch", "last_staff_names"),
@@ -681,7 +754,7 @@ def share_leagues(save):
         for path in paths:
             with open(path, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                fields = [c for c in reader.fieldnames if c != "Loan"]
+                fields = [c for c in reader.fieldnames if c not in ("Loan", "Player ID")]
                 rows = list(reader)
             seen = {}
             for r in rows:
@@ -758,6 +831,14 @@ def set_toml_key(text, key, value):
 def read_csv(path):
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def save_player_id(save, player):
+    """Namespace native fmsave observations by configured save and player identifiers."""
+    if not player.get("uid"):
+        return ""
+    return json.dumps(["fmsave", save, player["uid"], player.get("unique_id") or "",
+                       player.get("birth_date") or ""], ensure_ascii=False, separators=(",", ":"))
 
 
 def club_divisions(tmp, clubs):
@@ -859,7 +940,7 @@ def import_save(save, config, save_file=None):
             if keeper(p) != (view == "gk"):
                 continue
             loan = ("out" if p["loan_parent_club_uid"] == uid else "in") if p["on_loan"] == "true" else ""
-            rows.append([p["name"], managed, p["age"], foot_word(p["left_foot"]),
+            rows.append([p["name"], save_player_id(save, p), managed, p["age"], foot_word(p["left_foot"]),
                          fm_money(fm_round(float(p["contract_wage"]) * rate, WAGE_STEPS), currency, " p/w") if float(p["contract_wage"] or 0) else "N/A",  # no contract yet
                          fm_money(fm_round(value(p) * rate, VALUE_STEPS), currency) if value(p) is not None else "",
                          loan, minutes(p), rating(p), *(p[f"attributes_{k}"] for k in keys)])
@@ -867,7 +948,7 @@ def import_save(save, config, save_file=None):
             out = save_dir / "obs" / f"{date}_{slug}_{view}.csv"
             with open(out, "w", newline="", encoding="utf-8") as f:
                 wr = csv.writer(f, lineterminator="\n")
-                wr.writerow(["Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan", "Minutes", "Rating", *map(fm_name, keys)])
+                wr.writerow(["Name", "Player ID", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan", "Minutes", "Rating", *map(fm_name, keys)])
                 wr.writerows(rows)
             written.append(f"obs/{out.name} ({len(rows)})")
 
