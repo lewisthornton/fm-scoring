@@ -82,17 +82,25 @@ def find_root(explicit: Path | None):
     raise RuntimeError("Can't find fm-scoring. Clone https://github.com/jamiebolden/fm-scoring, then pass --fm-scoring-root \"C:\\path\\to\\fm-scoring\".")
 
 
-def load_weighted(root: Path):
-    """Load the exact scorer from the checkout selected for native rendering."""
-    path = root / "scoring.py"
+def load_checkout_module(root: Path, filename, label):
+    """Load the exact module from the checkout selected for native rendering."""
+    path = root / filename
     if not path.is_file():
-        raise RuntimeError(f"Shared scoring module missing: {path}. Update the selected fm-scoring checkout.")
-    spec = importlib.util.spec_from_file_location("_fm_scoring_shared", path)
+        raise RuntimeError(f"{label} module missing: {path}. Update the selected fm-scoring checkout.")
+    spec = importlib.util.spec_from_file_location(f"_fm_scoring_{path.stem}", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load shared scoring module: {path}")
+        raise RuntimeError(f"Cannot load {label.lower()} module: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.weighted
+    return module
+
+
+def load_weighted(root: Path):
+    return load_checkout_module(root, "scoring.py", "Shared scoring").weighted
+
+
+def formation_path(root, explicit):
+    return explicit.expanduser().resolve() if explicit is not None else root / "formations" / "default.toml"
 
 
 def get_database(dbpath: Path, career: str):
@@ -481,8 +489,10 @@ def render_html(data):
 
 def sync_once(args, root):
     path = args.db.expanduser().resolve()
-    people, date, sources = get_database(path, args.career)
     weights = tomllib.loads((root / "weights" / "fm27v2.toml").read_text(encoding="utf-8"))
+    formation = load_checkout_module(root, "formation.py", "Tactical formation").load_formation(
+        formation_path(root, getattr(args, "formation", None)), weights)
+    people, date, sources = get_database(path, args.career)
     scored_people(people, weights, scorer=load_weighted(root))
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
     keeper_targets = [p for p in people if p["keeper"] and "target" in p["cohorts"] and "squad" not in p["cohorts"]]
@@ -507,16 +517,21 @@ def sync_once(args, root):
     proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode:
         raise RuntimeError("Dashboard created, but fm-scoring's score.py failed: " + (proc.stderr or proc.stdout)[-1800:])
+    write_atomic(outdir / "formation.json", json.dumps(formation, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     log(f"Rangers {squad_total} · active targets {target_total} · exported scored rows {exported_rows} · date {date}")
     log(f"Dashboard: {outdir / 'recruitment.html'}")
+    log(f"Formation: {formation['name']} · {outdir / 'formation.json'}")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
 
 
-def signatures(db: Path, weights: Path):
+def signatures(db: Path, weights: Path, formation: Path | None = None):
     signatures = []
-    for p in (db, Path(str(db) + "-wal"), weights):
+    paths = [db, Path(str(db) + "-wal"), weights]
+    if formation is not None:
+        paths.append(formation)
+    for p in paths:
         try:
             st = p.stat()
             signatures.append((st.st_size, st.st_mtime_ns))
@@ -532,6 +547,7 @@ def main(argv=None):
     ap.add_argument("--career", default="rangers", help="Career key in scoped database")
     ap.add_argument("--slug", default=DEFAULT_SLUG, help="Dedicated local fm-scoring save name")
     ap.add_argument("--currency", default="£", help="Display symbol ONLY (does not convert save monetary units)")
+    ap.add_argument("--formation", type=Path, help="Tactical TOML file (default: selected checkout's formations/default.toml)")
     ap.add_argument("--watch", action="store_true", help="Refresh continuously when SQLite database changes")
     ap.add_argument("--interval", type=float, default=15, help="Watch polling interval in seconds")
     ap.add_argument("--open", action="store_true", help="Open the dashboard in the default browser")
@@ -541,6 +557,7 @@ def main(argv=None):
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", args.slug):
         ap.error("--slug must be a simple directory name")
     root = find_root(args.fm_scoring_root)
+    args.formation = formation_path(root, args.formation)
     db = args.db.expanduser().resolve()
     weights = root / "weights" / "fm27v2.toml"
     if not args.watch:
@@ -550,7 +567,7 @@ def main(argv=None):
     last = None
     while True:
         try:
-            sig = signatures(db, weights)
+            sig = signatures(db, weights, args.formation)
             if sig != last and sig[0] is not None:
                 sync_once(args, root)
                 last = sig
