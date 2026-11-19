@@ -31,6 +31,7 @@ def player(uid, name, squad=False, keeper=False):
         "birth_date": "2000-01-01", "age": "27",
         "club_name": "Rangers" if squad else "Invented FC",
         "club_uid": "100" if squad else "200",
+        "on_loan": "false", "loan_parent_club_uid": "",
         "ability_current": "100", "ability_potential": "120",
         "positions_gk": "20" if keeper else "1",
         "positions_dc": "1" if keeper else "20",
@@ -71,6 +72,9 @@ class IntegrationTests(unittest.TestCase):
         self.game_date = DATE
         self.copies = []
         self.commands = []
+        self.managed = [{"club_uid": "100", "club_name": "Rangers", "club_short_name": "Rangers",
+                         "manager_staff_uid": "800"}]
+        self.club = [{"uid": "100", "name": "Rangers", "short_name": "Rangers"}]
 
     def fake_fmsave(self, command, copied_save, *args):
         copied = Path(copied_save)
@@ -80,7 +84,7 @@ class IntegrationTests(unittest.TestCase):
         self.commands.append((command, *args))
         if command == "info":
             return json.dumps({"game_date": self.game_date})
-        rows = self.squad if "--managed-club" in args else self.world
+        rows = {"managed-clubs": self.managed, "clubs": self.club, "players": self.world}[args[0]]
         write_csv(Path(args[args.index("-o") + 1]), rows)
         return ""
 
@@ -285,7 +289,7 @@ class IntegrationTests(unittest.TestCase):
         key = watcher.identity(p)
         with self.assertRaises(sqlite3.IntegrityError):
             watcher.import_selection(self.db, CAREER, self.source, "new", "new",
-                                     {"game_date": "2027-01-02"}, {key: p}, {key: {"invalid"}}, self.export)
+                                     {"game_date": "2027-01-02"}, {key: p}, {key: {"invalid"}}, self.export, ("100", "800"))
         self.assertEqual(self.dump(), before)
 
     def test_keeper_attribute_spelling_and_incomplete_record(self):
@@ -307,6 +311,7 @@ class IntegrationTests(unittest.TestCase):
         self.process()
         before = self.dump()
         self.squad = []
+        self.world = [self.target, self.target_gk, self.unselected]
         with patch.object(watcher, "fmsave", side_effect=self.fake_fmsave):
             with self.assertRaisesRegex(ValueError, "no Rangers players"):
                 watcher.process(self.db, self.source, CAREER, self.export)
@@ -401,7 +406,7 @@ class IntegrationTests(unittest.TestCase):
         self.process()
         key = watcher.identity(self.cb)
         result = watcher.import_selection(self.db, "other-career", self.source, "other", "filter",
-                                          {"info": {"in_game_date": DATE}}, {key: self.cb}, {key: {"squad"}}, None)
+                                          {"info": {"in_game_date": DATE}}, {key: self.cb}, {key: {"squad"}}, None, ("100", "800"))
         self.assertEqual(result, (1, 1))
         self.assertEqual(self.watermark("other-career"), DATE)
         self.assertEqual(self.watermark(), "2027-01-03")
@@ -415,7 +420,7 @@ class IntegrationTests(unittest.TestCase):
             with self.subTest(metadata=metadata):
                 with self.assertRaisesRegex(ValueError, "Missing or invalid game date"):
                     watcher.import_selection(self.db, CAREER, self.source, "new", "filter",
-                                             metadata, {key: self.cb}, {key: {"squad"}}, None)
+                                             metadata, {key: self.cb}, {key: {"squad"}}, None, ("100", "800"))
                 self.assertEqual(self.dump(), before)
 
     def test_watermark_write_failure_rolls_back_cohort_and_versions(self):
@@ -430,7 +435,6 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.dump(), before)
         self.assertEqual(self.watermark(), DATE)
 
-    @unittest.expectedFailure
     def test_known_incoming_loan_is_not_outgoing(self):
         self.cb.update(on_loan="true", loan_parent_club_uid="200")
         self.process()
@@ -438,6 +442,101 @@ class IntegrationTests(unittest.TestCase):
         out = self.render()
         defender = next(p for p in self.native_data(out, "squad") if p["name"] == self.cb["name"])
         self.assertEqual(defender["loan"], "in")
+
+    def test_managed_club_binding_and_wrong_club_rejection(self):
+        self.process()
+        self.assertEqual(self.db.execute("SELECT club_uid,manager_staff_uid FROM career_club WHERE career=?", (CAREER,)).fetchone(),
+                         ("100", "800"))
+        before = self.dump()
+        for managed, club in [
+            ([{"club_uid": "200", "club_name": "Invented FC"}], self.club),
+            ([{"club_uid": "", "club_name": "Rangers"}], self.club),
+            ([{"club_uid": "100", "club_name": "Invented FC", "club_short_name": "Rangers"}], self.club),
+            ([], self.club),
+            (self.managed * 2, self.club),
+            (self.managed, [{"uid": "200", "name": "Rangers"}]),
+            ([dict(self.managed[0], manager_staff_uid="801")], self.club),
+            ([dict(self.managed[0], club_uid="200")], [{"uid": "200", "name": "Rangers"}]),
+        ]:
+            with self.subTest(managed=managed, club=club):
+                original_managed, original_club = self.managed, self.club
+                self.managed, self.club = managed, club
+                with self.assertRaises(ValueError):
+                    self.process()
+                self.managed, self.club = original_managed, original_club
+                self.assertEqual(self.dump(), before)
+
+    def test_legacy_career_binding_checks_existing_squad(self):
+        self.process()
+        self.db.execute("DROP TABLE career_club")
+        self.db.commit()
+        self.prepare_renderer()
+        self.assertEqual(self.dashboard(self.render())["squad_availability"][0]["availability"], "available")
+        # Opening an old database creates the additive table without binding it.
+        migrated = watcher.connect(self.dbpath)
+        migrated.close()
+        before = self.dump()
+        self.managed[0]["club_uid"] = "200"
+        self.club[0]["uid"] = "200"
+        with self.assertRaisesRegex(ValueError, "Cannot reconcile"):
+            self.process()
+        self.assertEqual(self.dump(), before)
+        self.managed[0]["club_uid"] = self.club[0]["uid"] = "100"
+        self.process()
+        self.assertEqual(self.db.execute("SELECT club_uid FROM career_club").fetchone()[0], "100")
+
+    def test_first_import_binding_failure_rolls_back_everything(self):
+        self.db.execute("""CREATE TRIGGER reject_club BEFORE INSERT ON career_club
+            BEGIN SELECT RAISE(ABORT, 'invented club binding failure'); END""")
+        before = self.dump()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "invented club binding failure"):
+            self.process()
+        self.assertEqual(self.dump(), before)
+
+    def test_unknown_loan_evidence_is_not_available(self):
+        for raw in (
+            {"club_uid": "100", "on_loan": "true"},
+            {"club_uid": "100", "on_loan": "false", "loan_parent_club_uid": "200"},
+            {"club_uid": "100", "on_loan": "true", "loan_parent_club_uid": "100"},
+            {"club_uid": "", "on_loan": "true", "loan_parent_club_uid": "100"},
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(bridge.loan_state(raw, "100"), ("unknown", "unknown"))
+
+    def test_loan_availability_and_native_history(self):
+        outgoing = player(6, "Fixture Outgoing")
+        outgoing.update(on_loan="true", loan_parent_club_uid="100", loan_parent_club_name="Rangers")
+        for name in MODEL["outfield"]["CB"]:
+            outgoing["attributes_" + name.lower().replace(" ", "_")] = "20"
+        incoming = player(7, "Fixture Incoming", squad=True)
+        incoming.update(on_loan="true", loan_parent_club_uid="200")
+        unknown = player(8, "Fixture Unknown", squad=True)
+        unknown.update(on_loan="", loan_parent_club_uid="")
+        self.world.extend([outgoing, incoming, unknown])
+        self.process([])
+        self.prepare_renderer()
+        out = self.render()
+        report = self.dashboard(out)
+        states = {p["name"]: (p["loan_state"], p["availability"]) for p in report["squad_availability"]}
+        self.assertEqual(states[self.cb["name"]], ("permanent", "available"))
+        self.assertEqual(states[incoming["name"]], ("incoming", "available"))
+        self.assertEqual(states[outgoing["name"]], ("outgoing", "unavailable"))
+        self.assertEqual(states[unknown["name"]], ("unknown", "unknown"))
+        self.assertNotEqual(report["roles"]["CB"]["incumbent"]["name"], outgoing["name"])
+        native = {p["name"]: p for p in self.native_data(out, "squad")}
+        self.assertEqual(native[outgoing["name"]]["loan"], "out")
+        self.assertEqual(native[incoming["name"]]["loan"], "in")
+        self.assertEqual(native[unknown["name"]]["loan"], "unknown")
+        self.game_date = "2027-01-02"
+        outgoing.update(on_loan="false", loan_parent_club_uid="", loan_parent_club_name="",
+                        club_uid="100", club_name="Rangers")
+        self.process([])
+        out = self.render()
+        native = {p["name"]: p for p in self.native_data(out, "squad")}
+        self.assertIsNone(native[outgoing["name"]]["loan"])
+        self.assertEqual(len(native[outgoing["name"]]["history"]), 2)
+        key = watcher.identity(outgoing)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM player_versions WHERE player_key=?", (key,)).fetchone()[0], 2)
 
     @unittest.expectedFailure
     def test_known_namesake_does_not_split_native_history(self):
