@@ -77,6 +77,11 @@ class IntegrationTests(unittest.TestCase):
         self.managed = [{"club_uid": "100", "club_name": "Rangers", "club_short_name": "Rangers",
                          "manager_staff_uid": "800"}]
         self.club = [{"uid": "100", "name": "Rangers", "short_name": "Rangers"}]
+        self.league_clubs = []
+        self.league_nations = []
+        self.league_competitions = []
+        self.league_tables = []
+        self.league_fixtures = []
 
     def fake_fmsave(self, command, copied_save, *args):
         copied = Path(copied_save)
@@ -86,18 +91,24 @@ class IntegrationTests(unittest.TestCase):
         self.commands.append((command, *args))
         if command == "info":
             return json.dumps({"game_date": self.game_date})
-        rows = {"managed-clubs": self.managed, "clubs": self.club, "players": self.world}[args[0]]
-        write_csv(Path(args[args.index("-o") + 1]), rows)
+        output = Path(args[args.index("-o") + 1])
+        if args[0] == "league-tables":
+            output.write_text(json.dumps(self.league_tables), encoding="utf-8")
+        else:
+            rows = {"managed-clubs": self.managed, "clubs": self.league_clubs if "--nation" in args else self.club,
+                    "players": self.world, "nations": self.league_nations,
+                    "competitions": self.league_competitions, "fixtures": self.league_fixtures}[args[0]]
+            write_csv(output, rows)
         return ""
 
-    def process(self, candidates=None):
+    def process(self, candidates=None, **kwargs):
         self.source.write_bytes(b"invented save bytes " + self.game_date.encode("ascii"))
         candidates = self.candidates if candidates is None else candidates
         write_csv(self.export, candidates or [{"Unique ID": ""}])
         if not candidates:
             self.export.write_text("Unique ID\n", encoding="utf-8")
         with patch.object(watcher, "fmsave", side_effect=self.fake_fmsave):
-            return watcher.process(self.db, self.source, CAREER, self.export)
+            return watcher.process(self.db, self.source, CAREER, self.export, **kwargs)
 
     def dump(self):
         return list(self.db.iterdump())
@@ -106,7 +117,7 @@ class IntegrationTests(unittest.TestCase):
         return set(self.db.execute("SELECT player_key, cohort FROM cohort_membership WHERE active=1"))
 
     def prepare_renderer(self):
-        for name in ("score.py", "scoring.py", "formation.py", "tactical_assessment.py", "template.html", "charts.html", "theme.css"):
+        for name in ("score.py", "scoring.py", "formation.py", "tactical_assessment.py", "league_benchmarks.py", "template.html", "charts.html", "theme.css"):
             shutil.copyfile(ROOT / name, self.root / name)
         shutil.copytree(ROOT / "weights", self.root / "weights")
         shutil.copytree(ROOT / "formations", self.root / "formations")
@@ -136,6 +147,7 @@ class IntegrationTests(unittest.TestCase):
         expected = {p.name: p.read_bytes() for p in out.glob("*.html")}
         expected_formation = (out / "formation.json").read_bytes()
         expected_assessments = (out / "tactical_assessments.json").read_bytes()
+        expected_benchmarks = (out / "league_benchmarks.json").read_bytes()
         launcher = self.root / "FMAnalytics"
         launcher.mkdir()
         for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
@@ -158,6 +170,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
         self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
+        self.assertEqual((out / "league_benchmarks.json").read_bytes(), expected_benchmarks)
         self.assertEqual(standalone_db.read_bytes(), before)
 
         # An unrelated module beside the launcher must not shadow the selected
@@ -165,17 +178,101 @@ class IntegrationTests(unittest.TestCase):
         (launcher / "scoring.py").write_text("raise AssertionError('wrong scorer')\n", encoding="utf-8")
         (launcher / "formation.py").write_text("raise AssertionError('wrong formation module')\n", encoding="utf-8")
         (launcher / "tactical_assessment.py").write_text("raise AssertionError('wrong assessment module')\n", encoding="utf-8")
+        (launcher / "league_benchmarks.py").write_text("raise AssertionError('wrong benchmark module')\n", encoding="utf-8")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual((out / "formation.json").read_bytes(), expected_formation)
         self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
+        self.assertEqual((out / "league_benchmarks.json").read_bytes(), expected_benchmarks)
         (self.root / "scoring.py").rename(self.root / "scoring.disabled")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Shared scoring module missing", result.stdout)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
         self.assertEqual(standalone_db.read_bytes(), before)
+
+    def test_benchmark_capture_reuses_world_export_and_scopes_aggregate(self):
+        from datetime import date, timedelta
+        import formation
+
+        self.prepare_renderer()
+        self.club[0]["nation_id"] = "7"
+        self.league_clubs = [{"uid": str(i), "nation_id": "7"} for i in range(100, 112)]
+        self.league_nations = [{"nation_id": "7", "database_id": "793"}]
+        self.league_competitions = [{"id": "500", "database_id": "9000", "name": ""}]
+        self.league_tables = [{"competition_id": "500", "rows": [
+            {"club_uid": str(i), "team_slot": 0} for i in range(100, 112)]}]
+        self.league_fixtures = [
+            {"competition_id": "500", "season_start_year": "2026",
+             "date": (date(2026, 8, 1) + timedelta(days=index * 24)).isoformat(),
+             "home_club_uid": "100", "away_club_uid": str(uid), "home_team_slot": 0, "away_team_slot": 0}
+            for index, uid in enumerate(range(101, 112))]
+        (self.root / "leagues").mkdir()
+        (self.root / "leagues/divisions.toml").write_text('[nations]\n793 = "SCO"\n', encoding="utf-8")
+        names = self.root / "competition-names.csv"
+        write_csv(names, [{"database_id": "9000", "name": "Scottish Premiership (invented ID)"}])
+        for record in self.squad:
+            record["team_slot"] = "0"
+        for club in range(101, 112):
+            for i in range(4):
+                keeper = i >= 2
+                record = player(1000 + club * 10 + i, f"Unselected league player {club}-{i}", keeper=keeper)
+                record.update(club_uid=str(club), team_slot="0")
+                for code in formation.FM_POSITION_CODES:
+                    record["positions_" + code] = "20" if (code == "gk") == keeper else "1"
+                self.world.append(record)
+        self.process(benchmark_root=self.root, benchmark_names=names)
+        out = self.render()
+        path = out / "league_benchmarks.json"
+        first = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(first["status"], "available")
+        self.assertEqual(first["competition"]["league_nation_code"], "SCO")
+        self.assertEqual(first["competition"]["display_name"], "Scottish Premiership (invented ID)")
+        self.assertEqual(first["season_start_year"], 2026)
+        self.assertEqual(first["reference"]["profiles"]["CB"]["sample_size"], 23)
+        self.assertEqual(first["reference"]["profiles"]["GK"]["sample_size"], 23)
+        expected_ids = {json.dumps(["rangers", CAREER, watcher.identity(p)], separators=(",", ":"))
+                        for p in (self.cb, self.gk, self.target, self.target_gk)}
+        self.assertEqual({c["player_id"] for c in first["comparisons"]}, expected_ids)
+        defender_id = json.dumps(["rangers", CAREER, watcher.identity(self.cb)], separators=(",", ":"))
+        defender = next(c for c in first["comparisons"] if c["player_id"] == defender_id and c["profile"] == "CB")
+        self.assertEqual(defender["status"], "available")
+        self.assertEqual(defender["attribute_profile_score"], self.expected_score(self.cb, MODEL["outfield"]["CB"]))
+        self.assertNotIn("Unselected league player", path.read_text(encoding="utf-8"))
+        self.assertNotIn("Unselected league player", str(self.dump()))
+        self.assertEqual(sum(c[:2] == ("export", "players") for c in self.commands), 1)
+        self.assertTrue(all(not p.parent.exists() for p in self.copies))
+        same = path.read_bytes()
+        self.render()
+        self.assertEqual(path.read_bytes(), same)
+        metadata_reads = sum(c[:2] == ("export", "league-tables") for c in self.commands)
+        self.process(benchmark_root=self.root, benchmark_names=names)
+        self.assertEqual(sum(c[:2] == ("export", "league-tables") for c in self.commands), metadata_reads)
+
+        self.game_date = "2027-01-03"
+        self.process(benchmark_root=self.root, benchmark_names=names)
+        self.render()
+        later = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(later["game_date"], "2027-01-03")
+        self.assertEqual(later["extraction_game_date"], DATE)
+        self.assertEqual(later["reference"], first["reference"])
+        self.assertEqual(later["provenance"]["reference_save_sha256"], first["provenance"]["reference_save_sha256"])
+        self.assertTrue(any("reference_extracted_on_earlier_game_date" in c["warnings"] for c in later["comparisons"]))
+        self.game_date = "2027-02-01"
+        self.process(benchmark_root=self.root, benchmark_names=names)
+        self.render()
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["extraction_game_date"], self.game_date)
+
+        # A different career with overlapping IDs has no cached benchmark.
+        key = watcher.identity(self.cb)
+        watcher.import_selection(self.db, "other-career", self.source, "other", "filter",
+                                 {"game_date": DATE}, {key: self.cb}, {key: {"squad"}}, None, ("100", "800"))
+        self.render("--career", "other-career", "--slug", "other-benchmark")
+        other_path = self.root / "out/other-benchmark/league_benchmarks.json"
+        other = json.loads(other_path.read_text(encoding="utf-8"))
+        self.assertEqual(other["reason"], "benchmark_not_captured")
+        self.assertTrue(all(json.loads(c["player_id"])[1] == "other-career" for c in other["comparisons"]))
 
     def test_selected_formation_sidecar_preserves_all_dashboard_outputs(self):
         self.process()
