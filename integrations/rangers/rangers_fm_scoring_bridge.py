@@ -28,6 +28,10 @@ import tomllib
 import webbrowser
 from rangers_club import loan_state, rangers_ids
 
+# The CLI can be launched directly from any working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scoring import weighted
+
 DEFAULT_DB = Path(__file__).resolve().parent / "fm_rangers_scoped.sqlite3"
 DEFAULT_SLUG = "rangers-recruitment"
 META = ["Name", "Club", "Age", "Left Foot", "Wage", "Transfer Value", "Loan"]
@@ -200,11 +204,14 @@ def position_rating(raw, role):
 
 
 def score(attrs, weights):
-    """Exactly fm-scoring's `weighted` semantics: all attributes needed; no imputation."""
-    if not weights or not all(name in attrs for name in weights):
+    """Adapt the shared grouped scorer to a single optional score."""
+    if not weights:
         return None
-    d = sum(weights.values())
-    return sum(attrs[name] * weight for name, weight in weights.items()) / d if d else None
+    try:
+        return weighted(attrs, {"score": weights}).get("score")
+    except ZeroDivisionError:
+        # Preserve the bridge's existing treatment of zero-total profiles.
+        return None
 
 
 def scored_people(people, model):
