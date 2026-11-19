@@ -1,6 +1,7 @@
 """Characterisation of the existing Rangers integration using invented data."""
 import csv
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -10,6 +11,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -193,6 +195,80 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "refusing to replace"):
             self.process([{"Player": self.target["name"], "Age": "27", "Club": "Invented FC"}])
         self.assertEqual(self.dump(), before)
+
+    def test_f9_without_unique_id_matches_names_and_attribute_confirmed_club_mismatch(self):
+        # Exporter columns use the in-game display names, not fmsave keys.
+        fields = ("Pace", "Acceleration", "Stamina", "Strength", "Anticipation", "Passing")
+
+        def candidate(record, club):
+            return {
+                "Player": record["name"], "Age": record["age"], "Club": club,
+                **{name: record["attributes_" + name.lower()] for name in fields},
+            }
+
+        # Same name and age as the target keeper, but a different identity and
+        # incompatible attributes. Neither club matches the exported label.
+        namesake = dict(self.target_gk, uid="99", unique_id="99", club_name="Other FC")
+        for name in fields:
+            key = "attributes_" + name.lower()
+            namesake[key] = "1"
+        self.world.append(namesake)
+        candidates = [
+            candidate(self.cb, "Rangers"),
+            candidate(self.target, "Invented FC"),
+            candidate(self.target_gk, "Invented Football Club"),
+        ]
+        self.process(candidates)
+        self.assertEqual(set(watcher.read_csv(self.export)[0]), {"Player", "Age", "Club", *fields})
+        self.assertEqual(self.active(), {
+            (watcher.identity(self.cb), "squad"),
+            (watcher.identity(self.cb), "target"),
+            (watcher.identity(self.gk), "squad"),
+            (watcher.identity(self.target), "target"),
+            (watcher.identity(self.target_gk), "target"),
+        })
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM player_versions").fetchone()[0], 4)
+
+    def once_args(self):
+        return SimpleNamespace(
+            file=None, watch_dir=self.root, pattern="*.fm",
+            exports_dir=self.root, export_pattern="f9-*.csv",
+            db=self.dbpath, career=CAREER, once=True,
+        )
+
+    def test_once_selects_newest_stable_save_and_matching_export(self):
+        newer_save = self.root / "newer.fm"
+        newer_save.write_bytes(b"newer invented save")
+        older_export = self.root / "f9-older.csv"
+        newest_export = self.root / "f9-newest.csv"
+        ignored_export = self.root / "unrelated.csv"
+        for path, timestamp in [(self.source, 100), (newer_save, 200),
+                                (older_export, 100), (newest_export, 200),
+                                (ignored_export, 300)]:
+            if path.suffix == ".csv":
+                write_csv(path, self.candidates)
+            modified = 1_700_000_000 + timestamp
+            os.utime(path, (modified, modified))
+        with patch.object(watcher.time, "sleep") as sleep, patch.object(watcher, "process") as process:
+            self.assertEqual(watcher.run(self.once_args()), 0)
+        sleep.assert_called_once_with(3)
+        process.assert_called_once()
+        self.assertEqual(process.call_args.args[1:], (newer_save, CAREER, newest_export))
+
+    def test_once_rejects_save_or_export_that_changes_during_stability_wait(self):
+        export = self.root / "f9-latest.csv"
+        write_csv(export, self.candidates)
+        for changing in (self.source, export):
+            with self.subTest(changing=changing.name):
+                def change_during_wait(seconds):
+                    with changing.open("ab") as stream:
+                        stream.write(b"changed")
+
+                with patch.object(watcher.time, "sleep", side_effect=change_during_wait), \
+                        patch.object(watcher, "process") as process:
+                    with self.assertRaisesRegex(RuntimeError, "still being written"):
+                        watcher.run(self.once_args())
+                process.assert_not_called()
 
     def test_parser_failure_preserves_previous_cohort(self):
         self.process()
