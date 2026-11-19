@@ -104,7 +104,7 @@ def formation_path(root, explicit):
     return explicit.expanduser().resolve() if explicit is not None else root / "formations" / "default.toml"
 
 
-def get_database(dbpath: Path, career: str, *, with_benchmark=False):
+def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty=False):
     """Consistent SQLite snapshot; does not create or modify an absent DB."""
     if not dbpath.is_file():
         raise RuntimeError(f"Scoped watcher database does not exist: {dbpath}")
@@ -138,7 +138,7 @@ def get_database(dbpath: Path, career: str, *, with_benchmark=False):
         con.close()
     except sqlite3.Error as exc:
         raise RuntimeError(f"Can't read expected scoped database tables in {dbpath}: {exc}") from exc
-    if not rows:
+    if not rows and not allow_empty:
         raise RuntimeError(f"No active squad or targets for career {career!r}. Run the autosave watcher first.")
     people = {}
     date = None
@@ -511,7 +511,7 @@ def sync_once(args, root):
     formation_module = load_checkout_module(root, "formation.py", "Tactical formation")
     selected_formation = formation_path(root, getattr(args, "formation", None))
     formation = formation_module.load_formation(selected_formation, weights)
-    people, date, sources, benchmark_cache = get_database(path, args.career, with_benchmark=True)
+    people, date, sources, benchmark_cache = get_database(path, args.career, with_benchmark=True, allow_empty=True)
     scorer = load_weighted(root)
     scored_people(people, weights, scorer=scorer)
     tactical_module = load_checkout_module(root, "tactical_assessment.py", "Tactical assessment")
@@ -522,6 +522,17 @@ def sync_once(args, root):
     benchmark = load_checkout_module(root, "league_benchmarks.py", "League benchmark").build_report(
         benchmark_cache, people, args.career, assessment["game_date"], assessment["scoring_model"]["sha256"],
         POSITION_CODES, lambda raw: tactical_module.position_evidence(raw, formation_module.FM_POSITION_CODES))
+    xi_module = load_checkout_module(root, "optimal_xi.py", "Starting XI")
+    policy_path = getattr(args, "xi_policy", None)
+    policy = json.loads(policy_path.read_text(encoding="utf-8")) if policy_path else None
+    xi = xi_module.build_optimal_xi(formation, assessment, benchmark, policy=policy)
+    outdir = root / "out" / args.slug
+    # Publish the honest partial XI even if the legacy renderer cannot score
+    # a goalkeeper or has no active squad. Legacy failure semantics remain.
+    write_atomic(outdir / "optimal_xi.json", json.dumps(xi, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+    write_atomic(outdir / "optimal_xi.html", xi_module.render_html(xi))
+    if not people:
+        raise RuntimeError(f"No active squad or targets for career {args.career!r}. Run the autosave watcher first.")
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
     keeper_targets = [p for p in people if p["keeper"] and "target" in p["cohorts"] and "squad" not in p["cohorts"]]
     unscored_keepers = [p["name"] for p in [*keeper_squad, *keeper_targets]
@@ -553,16 +564,19 @@ def sync_once(args, root):
     log(f"Formation: {formation['name']} · {outdir / 'formation.json'}")
     log(f"Tactical assessments: {outdir / 'tactical_assessments.json'}")
     log(f"League benchmarks: {outdir / 'league_benchmarks.json'} ({benchmark['status']})")
+    log(f"Starting XI: {outdir / 'optimal_xi.html'} ({xi['solver']['status']})")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
 
 
-def signatures(db: Path, weights: Path, formation: Path | None = None):
+def signatures(db: Path, weights: Path, formation: Path | None = None, xi_policy: Path | None = None):
     signatures = []
     paths = [db, Path(str(db) + "-wal"), weights]
     if formation is not None:
         paths.append(formation)
+    if xi_policy is not None:
+        paths.append(xi_policy)
     for p in paths:
         try:
             st = p.stat()
@@ -580,6 +594,7 @@ def main(argv=None):
     ap.add_argument("--slug", default=DEFAULT_SLUG, help="Dedicated local fm-scoring save name")
     ap.add_argument("--currency", default="£", help="Display symbol ONLY (does not convert save monetary units)")
     ap.add_argument("--formation", type=Path, help="Tactical TOML file (default: selected checkout's formations/default.toml)")
+    ap.add_argument("--xi-policy", type=Path, help="Optional starting-XI eligibility policy JSON")
     ap.add_argument("--watch", action="store_true", help="Refresh continuously when SQLite database changes")
     ap.add_argument("--interval", type=float, default=15, help="Watch polling interval in seconds")
     ap.add_argument("--open", action="store_true", help="Open the dashboard in the default browser")
@@ -599,7 +614,7 @@ def main(argv=None):
     last = None
     while True:
         try:
-            sig = signatures(db, weights, args.formation)
+            sig = signatures(db, weights, args.formation, args.xi_policy)
             if sig != last and sig[0] is not None:
                 sync_once(args, root)
                 last = sig
