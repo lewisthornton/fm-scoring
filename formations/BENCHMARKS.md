@@ -1,0 +1,27 @@
+# League reference distributions (version 1)
+
+The watcher captures aggregate references and the bridge publishes `league_benchmarks.json` separately from existing scoring, recruitment and tactical outputs.
+
+## Detection
+
+The fmsave contracts are club/nation IDs, competition `id` (save-local) and `database_id` (editor ID), live league tables and managed-club fixtures (`competition_id`, `season_start_year`, `date`, club UIDs and team slots). See [fmsave models](https://github.com/rhiever/fmsave/tree/main/src/fmsave/models) and `leagues/divisions.toml`. A reliable league/cup discriminator or competition name is not guaranteed; fmsave itself infers table links from fixtures.
+
+Require a unique domestic first-team table group of at least eight clubs including the managed club, a unique competition record and four distinct managed first-team fixture opponents in that group. Combine valid split tables sharing a competition ID. Season comes from fixture start year; current date must be within the fixture range or 31 days either side. Conflicting or incomplete evidence returns unavailable. Offseason, incomplete schedules, cross-border leagues or smaller tables may be unsupported. No arbitrary peer fallback.
+
+Optional watcher `--benchmark-competition 500` selects an otherwise corroborated save-local ID when ambiguous (invented example); it cannot force an unsupported competition or ambiguous season. `--benchmark-names path/to/names.csv` maps editor IDs to display labels, columns `database_id,name` (e.g. `9000,Example Premiership`). This does not determine membership. If no name is exported or mapped, label the ID explicitly and warn.
+
+Reuse the full-world CSV already required by selection, deleted with the other temporary files. Five scoped/metadata exports establish competition on new save hashes; repeated same-save selections can reuse the result. Refresh aggregate after 30 game days, competition/season/club-set/model/parser changes, or insufficient sample. Only the latest aggregate per career is stored in an additive SQLite table, atomically with normal acceptance. No individual reference identities or attributes are retained. Older databases return unavailable until an accepted import. Standalone installations should update both companion scripts and checkout together; watcher `--fm-scoring-root` optionally selects the checkout.
+
+## Reference population
+
+Use currently registered players at detected league clubs, team slot 0, unique valid UID. Loan parent is not current club; match eligibility is not inferred. Exclude duplicate IDs, unknown team slot and unknown GK type. Exact GK rating >=18 identifies goalkeeper domain. Require at least one exact rating >=15 in the relevant established profile position-code group; text-derived familiarity is not precise evidence. Versatile outfield players can appear in multiple profiles. GK/outfield distributions never mix.
+
+Use unchanged shared weighted scoring and `fm27v2.toml`; no imputation. Require >=20 complete scores, >=4 contributing clubs and >=75% attribute coverage among confirmed familiar players per profile. These quality gates are not confidence intervals. Missing familiarity can bias samples. Quantiles interpolate at `(n-1)*p`; empirical percentile is `100*(number below + 0.5*number equal)/n`. Ties share ranks; outside observed range gives 0 or 100. Histograms are sorted aggregate score/frequency pairs, not player records. No match-performance probability or role-suitability estimate is implied.
+
+## JSON contract
+
+Root: `version` (integer), `career` (string), `game_date` (ISO date or null), `status`, `reason` (nullable string), `competition` (nullable object: IDs, display label, name source, nation IDs/code), `season_start_year` (nullable integer), `extraction_game_date` (nullable ISO date), `scoring_model` (name/hash), `criteria`, `source`, `warnings`, `provenance` (save hash, parser/build, override, optional name-map hash and independent reference hashes). Dates are in-game. Detection includes fixture counts/range, candidates and selection method. `reference` contains population/club counts and `profiles` keyed by GK, FB, CB, 6, wing, 10, 9, each with status/reasons, sample/club/eligible counts, exclusion counts, coverage (fraction), median/p25/p75/p90 (nullable numbers), histogram (`[score,count]` pairs) and warnings. Insufficient samples omit estimates.
+
+`comparisons` has one row per scoped stable player ID and profile: attribute score, familiarity status, benchmark status/reason, competition ID, season, sample size, median, signed difference and percentile (nullable numbers), warnings. No comparison unless player type, familiarity, score and distribution are supported. Earlier reference dates are flagged. Tactical fit and availability remain separate; no assignment or optimisation.
+
+Tests use invented competitions and players; actual FM27 save extraction was not performed. Unavailable source evidence is reported explicitly while existing scoring/imports continue.
