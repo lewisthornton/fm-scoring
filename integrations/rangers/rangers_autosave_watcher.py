@@ -29,6 +29,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from rangers_club import club_uid, rangers_names, rangers_ids
 
 DEFAULT_DB = Path(__file__).resolve().parent / 'fm_rangers_scoped.sqlite3'
 BASE_FIELDS = {
@@ -92,6 +93,11 @@ CREATE INDEX IF NOT EXISTS ix_current_cohort ON cohort_membership(career,cohort,
 CREATE TABLE IF NOT EXISTS career_chronology (
     career TEXT PRIMARY KEY,
     latest_game_date TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS career_club (
+    career TEXT PRIMARY KEY,
+    club_uid TEXT NOT NULL,
+    manager_staff_uid TEXT
 );
 '''
 
@@ -228,19 +234,20 @@ def identity(row):
     return '|'.join((row['uid'],row.get('unique_id') or '',row.get('birth_date') or ''))
 
 
-def choose_rows(squad_csv, world_csv, candidates):
-    _, squad = read_csv(squad_csv)
-    if not squad:
+def choose_rows(world_csv, candidates, managed_uid):
+    fields, world = read_csv(world_csv)
+    required = {'uid','unique_id','birth_date','name','ability_current','ability_potential',
+                'club_uid','on_loan','loan_parent_club_uid'}
+    if not required <= set(fields):
+        raise ValueError('fmsave export columns changed; expected '+', '.join(sorted(required)))
+    squad = [r for r in world if club_uid(r.get('club_uid')) == managed_uid or
+             (str(r.get('on_loan','')).lower() == 'true' and club_uid(r.get('loan_parent_club_uid')) == managed_uid)]
+    if not any(club_uid(r.get('club_uid')) == managed_uid for r in squad):
         raise ValueError('Managed-club export has no Rangers players; verify the save is your Rangers career')
-    required = {'uid','unique_id','birth_date','name','ability_current','ability_potential'}
-    for r in squad:
-        if not required <= r.keys():
-            raise ValueError('fmsave export columns changed; expected '+', '.join(sorted(required)))
     rows = {identity(r): r for r in squad}
     membership = {k: {'squad'} for k in rows}
     if not candidates:
         return rows, membership, 0
-    _, world = read_csv(world_csv)
     by_id = defaultdict(dict)
     by_name_age = defaultdict(list)
     for r in world:
@@ -341,7 +348,47 @@ def connect(path):
     return db
 
 
-def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membership,export):
+def managed_identity(path):
+    _, rows = read_csv(path)
+    if len(rows) != 1:
+        raise ValueError('Expected exactly one managed club in fmsave metadata')
+    row = rows[0]
+    uid = club_uid(row.get('club_uid'))
+    if not uid or not rangers_names(row.get('club_name'),row.get('club_short_name')):
+        raise ValueError('Managed club is not unambiguously Rangers')
+    manager = row.get('manager_staff_uid')
+    if manager and not club_uid(manager):
+        raise ValueError('Invalid managed-club manager identifier')
+    return uid, club_uid(manager)
+
+
+def verify_club_record(path, managed_uid):
+    _, rows = read_csv(path)
+    if (len(rows) != 1 or club_uid(rows[0].get('uid')) != managed_uid or
+            not rangers_names(rows[0].get('name'),rows[0].get('short_name'))):
+        raise ValueError('Managed Rangers identifier conflicts with fmsave club record')
+
+
+def confirm_career_club(db,career,managed):
+    uid, manager = managed
+    previous = db.execute('SELECT club_uid,manager_staff_uid FROM career_club WHERE career=?',(career,)).fetchone()
+    if previous:
+        if previous[0] != uid or (previous[1] and manager and previous[1] != manager):
+            raise ValueError('Managed club or manager identifier conflicts with this career')
+        return
+    # Existing databases predate the binding. Check their active squad evidence
+    # before establishing an identifier, without rewriting any historical rows.
+    legacy = [json.loads(row[0]) for row in db.execute('''
+        SELECT p.record_json FROM cohort_membership m
+        JOIN player_latest l ON l.career=m.career AND l.player_key=m.player_key
+        JOIN player_versions p ON p.snapshot_id=l.snapshot_id AND p.player_key=l.player_key
+        WHERE m.career=? AND m.cohort='squad' AND m.active=1
+    ''',(career,))]
+    if legacy and rangers_ids(legacy) != {uid}:
+        raise ValueError('Cannot reconcile existing career club identifiers with managed Rangers club')
+
+
+def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membership,export,managed):
     info=metadata.get('info',metadata) if isinstance(metadata,dict) else None
     date=valid_game_date(info.get('game_date') or info.get('in_game_date')) if isinstance(info,dict) else None
     if date is None:
@@ -350,6 +397,7 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
     with db:
         # Serialise the chronology check with the writes, including concurrent watchers.
         db.execute('BEGIN IMMEDIATE')
+        confirm_career_club(db,career,managed)
         latest=db.execute('SELECT latest_game_date FROM career_chronology WHERE career=?',(career,)).fetchone()
         if latest and date<latest[0]:
             log(f'Skipping older rotating save for {career}: {date} < {latest[0]}')
@@ -392,6 +440,9 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
         db.execute('''INSERT INTO career_chronology(career,latest_game_date) VALUES (?,?)
             ON CONFLICT(career) DO UPDATE SET latest_game_date=excluded.latest_game_date''',
                    (career,date))
+        db.execute('''INSERT INTO career_club(career,club_uid,manager_staff_uid) VALUES (?,?,?)
+            ON CONFLICT(career) DO UPDATE SET manager_staff_uid=COALESCE(career_club.manager_staff_uid,excluded.manager_staff_uid)''',
+                   (career,*managed))
     return (len(rows),len(changes))
 
 
@@ -405,13 +456,18 @@ def process(db,source,career,export):
         # Do not skip an already-seen save+filter pair: re-selecting a prior filter
         # must reactivate its cohort even if no player attributes have changed.
         metadata=json.loads(fmsave('info',str(copy),'--json'))
-        squad_file=temp/'squad.csv'
-        fmsave('export',str(copy),'players','--managed-club','-o',str(squad_file),'--strict')
+        managed_file=temp/'managed.csv'
+        fmsave('export',str(copy),'managed-clubs','--all','-o',str(managed_file),'--strict')
+        managed=managed_identity(managed_file)
+        club_file=temp/'club.csv'
+        fmsave('export',str(copy),'clubs','--club',managed[0],'-o',str(club_file),'--strict')
+        verify_club_record(club_file,managed[0])
         world_file=temp/'all.csv'
-        if candidates:
-            fmsave('export',str(copy),'players','--all','-o',str(world_file),'--strict')
-        rows,membership,found=choose_rows(squad_file,world_file,candidates)
-        result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export)
+        # fmsave's managed-club player scope uses the current club, excluding
+        # players registered elsewhere on loan. Read all players transiently.
+        fmsave('export',str(copy),'players','--all','-o',str(world_file),'--strict')
+        rows,membership,found=choose_rows(world_file,candidates,managed[0])
+        result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export,managed)
         if result is None:
             return False
         n,k=result
