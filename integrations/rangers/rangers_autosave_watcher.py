@@ -478,6 +478,7 @@ def capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,
         from rangers_fm_scoring_bridge import find_root, load_checkout_module, load_weighted, attributes, POSITION_CODES
         checkout = find_root(root)
         module = load_checkout_module(checkout, "league_benchmarks.py", "League benchmark")
+        base["detection_policy"] = module.DETECTION_POLICY
         evidence_module = load_checkout_module(checkout, "tactical_assessment.py", "Tactical assessment")
         formation_module = load_checkout_module(checkout, "formation.py", "Tactical formation")
         model_bytes = (checkout / "weights" / "fm27v2.toml").read_bytes()
@@ -500,7 +501,7 @@ def capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,
             provenance["name_map_sha256"] = sha_file(names_file)
         cached_row = db.execute('SELECT aggregate_json FROM career_benchmark WHERE career=?',(career,)).fetchone()
         cached = json.loads(cached_row[0]) if cached_row else None
-        if (cached and cached.get("version") == 1 and cached.get("status") == "available" and cached.get("model_sha256") == model_hash
+        if (cached and cached.get("version") == 1 and cached.get("detection_policy") == module.DETECTION_POLICY and cached.get("status") == "available" and cached.get("model_sha256") == model_hash
                 and cached.get("observed_game_date") == observed_date
                 and all(cached.get("provenance", {}).get(key) == value for key,value in provenance.items())):
             return cached
@@ -512,7 +513,7 @@ def capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,
         fmsave('export',str(copy),'competitions','--all','-o',str(competitions_file),'--strict')
         fmsave('export',str(copy),'league-tables','--nation',nation,'--format','json','-o',str(tables_file),'--strict')
         fmsave('export',str(copy),'fixtures','--managed-club','--columns',
-               'competition_id,date,season_start_year,home_club_uid,away_club_uid,home_team_slot,away_team_slot',
+               'competition_id,date,season_start_year,home_club_uid,away_club_uid,home_team_slot,away_team_slot,stage_id,round,round_code',
                '-o',str(fixtures_file),'--strict')
         nation_rows = [row for row in read_csv(nation_file)[1] if module.identifier(row.get("nation_id")) == nation]
         nation_database_id = module.identifier(nation_rows[0].get("database_id")) if len(nation_rows) == 1 else None
