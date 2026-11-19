@@ -158,3 +158,14 @@ and removing only the newly added `player_id` and historical `name` fields from
 the three native player tables. It also checks the new full payload digests.
 Charts, filters, recruitment and staff data are unchanged in the unambiguous
 fixture. The namesake expected failure now passes as a regular regression.
+
+## Tactical formation configuration
+
+See [the formation contract](../formations/README.md) for the versioned TOML
+schema, default 4-3-3 and asymmetric 4-2-3-1 examples, and optional
+`--formation` launcher argument. The bridge loads the validator and default
+from the selected checkout and publishes `formation.json` alongside the HTML
+without changing existing page data. Tests cover both formations, optional
+phase responsibilities, stable ordering, malformed input, watch signatures
+and byte-identical default/custom HTML. No scoring model or player data
+migration is required.
