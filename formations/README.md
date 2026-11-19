@@ -70,8 +70,10 @@ After successful generation, the bridge publishes deterministic
 phase weights and ordered slots. All roles have `suitability: null` because no
 FM role suitability measurements are available in this milestone. The existing
 positional score is a separate weighted attribute score. Existing recruitment
-and native dashboard HTML remains unchanged for either formation. No player
-assignment or suitability inference takes place.
+and native dashboard HTML remains unchanged for either formation. The separate
+[tactical assessment contract](ASSESSMENTS.md) exposes position-based fit and
+attribute scores per player and slot. No player assignment or FM role suitability
+inference takes place.
 
 In Python, `formation.load_formation(path, model)` loads TOML and returns a
 JSON-ready dictionary. `formation.validate_formation(config, profiles)` validates

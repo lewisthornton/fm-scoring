@@ -16,6 +16,7 @@ import csv
 from collections import Counter, defaultdict
 from datetime import datetime
 import html
+import hashlib
 import importlib.util
 import json
 import os
@@ -116,12 +117,14 @@ def get_database(dbpath: Path, career: str):
             if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_club'").fetchone():
                 bound = con.execute("SELECT club_uid FROM career_club WHERE career=?", (career,)).fetchone()
             rows = con.execute("""
-                SELECT m.player_key, m.cohort, p.record_json, m.last_seen_game_date, m.source_export
+                SELECT m.player_key, m.cohort, p.record_json, m.last_seen_game_date, m.source_export,
+                       s.game_date AS record_game_date, s.game_build
                   FROM cohort_membership AS m
                   JOIN player_latest AS l
                     ON l.career=m.career AND l.player_key=m.player_key
                   JOIN player_versions AS p
                     ON p.snapshot_id=l.snapshot_id AND p.player_key=l.player_key
+                  JOIN snapshots AS s ON s.id=p.snapshot_id
                  WHERE m.career=? AND m.active=1
             """, (career,)).fetchall()
         con.close()
@@ -140,8 +143,13 @@ def get_database(dbpath: Path, career: str):
             except (ValueError, TypeError) as exc:
                 raise RuntimeError(f"Invalid JSON for player {key}: {exc}") from exc
             people[key] = {"key": key, "raw": record, "cohorts": set(),
-                           "player_id": json.dumps(["rangers", career, key], ensure_ascii=False, separators=(",", ":"))}
+                           "player_id": json.dumps(["rangers", career, key], ensure_ascii=False, separators=(",", ":")),
+                           "record_game_date": row["record_game_date"], "game_build": row["game_build"],
+                           "last_seen_game_date": None}
         people[key]["cohorts"].add(row["cohort"])
+        if row["last_seen_game_date"] and (not people[key]["last_seen_game_date"] or
+                                          row["last_seen_game_date"] > people[key]["last_seen_game_date"]):
+            people[key]["last_seen_game_date"] = row["last_seen_game_date"]
         if row["last_seen_game_date"] and (date is None or row["last_seen_game_date"] > date):
             date = row["last_seen_game_date"]
         if row["source_export"]:
@@ -489,11 +497,18 @@ def render_html(data):
 
 def sync_once(args, root):
     path = args.db.expanduser().resolve()
-    weights = tomllib.loads((root / "weights" / "fm27v2.toml").read_text(encoding="utf-8"))
-    formation = load_checkout_module(root, "formation.py", "Tactical formation").load_formation(
-        formation_path(root, getattr(args, "formation", None)), weights)
+    model_bytes = (root / "weights" / "fm27v2.toml").read_bytes()
+    weights = tomllib.loads(model_bytes.decode("utf-8"))
+    formation_module = load_checkout_module(root, "formation.py", "Tactical formation")
+    selected_formation = formation_path(root, getattr(args, "formation", None))
+    formation = formation_module.load_formation(selected_formation, weights)
     people, date, sources = get_database(path, args.career)
-    scored_people(people, weights, scorer=load_weighted(root))
+    scorer = load_weighted(root)
+    scored_people(people, weights, scorer=scorer)
+    assessment = load_checkout_module(root, "tactical_assessment.py", "Tactical assessment").build_assessments(
+        formation, weights, people, codes=formation_module.FM_POSITION_CODES, scorer=scorer,
+        career=args.career, formation_source=selected_formation.name,
+        model_sha256=hashlib.sha256(model_bytes).hexdigest())
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
     keeper_targets = [p for p in people if p["keeper"] and "target" in p["cohorts"] and "squad" not in p["cohorts"]]
     unscored_keepers = [p["name"] for p in [*keeper_squad, *keeper_targets]
@@ -518,9 +533,11 @@ def sync_once(args, root):
     if proc.returncode:
         raise RuntimeError("Dashboard created, but fm-scoring's score.py failed: " + (proc.stderr or proc.stdout)[-1800:])
     write_atomic(outdir / "formation.json", json.dumps(formation, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+    write_atomic(outdir / "tactical_assessments.json", json.dumps(assessment, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     log(f"Rangers {squad_total} · active targets {target_total} · exported scored rows {exported_rows} · date {date}")
     log(f"Dashboard: {outdir / 'recruitment.html'}")
     log(f"Formation: {formation['name']} · {outdir / 'formation.json'}")
+    log(f"Tactical assessments: {outdir / 'tactical_assessments.json'}")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
