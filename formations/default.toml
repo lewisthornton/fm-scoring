@@ -1,0 +1,105 @@
+version = 1
+name = "Conventional 4-3-3"
+
+[phase_weights]
+ip = 0.5
+oop = 0.5
+
+[[slots]]
+id = "gk"
+label = "Goalkeeper"
+side = "centre"
+positions = ["gk"]
+profile = "GK"
+ip = { position = "gk" }
+oop = { position = "gk" }
+
+[[slots]]
+id = "lb"
+label = "Left-back"
+side = "left"
+positions = ["dl", "wbl"]
+profile = "FB"
+ip = { position = "dl" }
+oop = { position = "dl" }
+
+[[slots]]
+id = "lcb"
+label = "Left centre-back"
+side = "left"
+positions = ["dc", "sw"]
+profile = "CB"
+ip = { position = "dc" }
+oop = { position = "dc" }
+
+[[slots]]
+id = "rcb"
+label = "Right centre-back"
+side = "right"
+positions = ["dc", "sw"]
+profile = "CB"
+ip = { position = "dc" }
+oop = { position = "dc" }
+
+[[slots]]
+id = "rb"
+label = "Right-back"
+side = "right"
+positions = ["dr", "wbr"]
+profile = "FB"
+ip = { position = "dr" }
+oop = { position = "dr" }
+
+[[slots]]
+id = "dm"
+label = "Holding midfielder"
+side = "centre"
+positions = ["dm", "mc"]
+profile = "6"
+ip = { position = "dm" }
+oop = { position = "dm" }
+
+[[slots]]
+id = "lcm"
+label = "Left central midfielder"
+side = "left"
+positions = ["mc", "dm"]
+profile = "6"
+ip = { position = "mc" }
+oop = { position = "mc" }
+
+[[slots]]
+id = "rcm"
+label = "Right central midfielder"
+side = "right"
+positions = ["mc", "amc"]
+profile = "10"
+ip = { position = "mc" }
+oop = { position = "mc" }
+
+[[slots]]
+id = "lw"
+label = "Left winger"
+side = "left"
+positions = ["aml", "ml"]
+profile = "wing"
+ip = { position = "aml" }
+oop = { position = "aml" }
+
+[[slots]]
+id = "rw"
+label = "Right winger"
+side = "right"
+positions = ["amr", "mr"]
+profile = "wing"
+ip = { position = "amr" }
+oop = { position = "amr" }
+
+[[slots]]
+id = "st"
+label = "Striker"
+side = "centre"
+positions = ["stc"]
+profile = "9"
+ip = { position = "stc" }
+oop = { position = "stc" }
