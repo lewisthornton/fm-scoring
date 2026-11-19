@@ -151,7 +151,8 @@ def build_squad_depth(formation, assessment, benchmark=None, *, optimizer, polic
                           "domain": "goalkeeper" if slot["profile"] == "GK" else "outfield", "baseline": totals(baseline),
                           "reoptimised": totals(result), "filled_slot_loss": loss, "additional_vacancy": loss > 0,
                           "outfield_score_loss": outfield_loss, "goalkeeper_score_loss": keeper_loss,
-                          "effective_deputy_id": deputy, "changes": changes, "positional_change_count": len(changes),
+                          "effective_deputy_id": deputy, "changes": changes, "changed_slot_count": len(changes),
+                          "positional_change_count": len(moved),
                           "promoted_player_ids": promoted, "moved_starters": moved, "newly_vacant_slot_ids": newly_vacant,
                           "assignments": [{"slot_id": a["slot_id"], "player_id": a["player_id"],
                                            "attribute_profile_score": a["attribute_profile_score"], "warnings": a["warnings"],
@@ -211,7 +212,7 @@ def render_html(report):
     for s in report["starter_loss_scenarios"]:
         changes = "".join(f'<li>{esc(slots[c["slot_id"]])}: {name(c["before_player_id"])} → {name(c["after_player_id"])}</li>' for c in s["changes"])
         warnings = "".join(f'<li>{esc(slots[a["slot_id"]])}: {esc(", ".join(a["warnings"]))}</li>' for a in s["assignments"] if a["warnings"])
-        details.append(f'<details><summary>{name(s["removed_player_id"])} — {esc(slots[s["original_slot_id"]])}: {s["filled_slot_loss"]} filled slots lost; outfield loss {score(s["outfield_score_loss"])}, GK loss {score(s["goalkeeper_score_loss"])}</summary><ul>{changes}{warnings}</ul></details>')
+        details.append(f'<details><summary>{name(s["removed_player_id"])} — {esc(slots[s["original_slot_id"]])}: {s["filled_slot_loss"]} filled slots lost; changed slots: {s["changed_slot_count"]}, repositioned starters: {s["positional_change_count"]}; outfield loss {score(s["outfield_score_loss"])}, GK loss {score(s["goalkeeper_score_loss"])}</summary><ul>{changes}{warnings}</ul></details>')
     shared = "".join(f'<li>{esc(" / ".join(slots[x] for x in r["slot_ids"]))}: {", ".join(name(p) for p in r["shared_player_ids"])} — simultaneous capacity {r["simultaneously_coverable_slots"]}/2</li>' for r in report["shared_cover"])
     uncertain = "".join(f'<li>{esc(e["display_name"])} — {esc(e["availability"])}: {esc(e["reason"] or "uncertain availability")}</li>'
                         for e in report["baseline"]["excluded_or_uncertain_players"] if not e["eligible_slots"] or e["availability"] != "available")
