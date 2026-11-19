@@ -38,6 +38,11 @@ class SquadDepthTests(unittest.TestCase):
         self.assertEqual(len(result["starter_loss_scenarios"]), 11)
         self.assertTrue(all(s["filled_slot_loss"] == 0 for s in result["starter_loss_scenarios"]))
         self.assertEqual(coverage(result, "lb")["effective_deputy_id"], "reserve-lb")
+        lb = scenario(result, "lb")
+        self.assertEqual(lb["changed_slot_count"], 1)
+        self.assertEqual(lb["positional_change_count"], 0)
+        self.assertEqual(lb["moved_starters"], [])
+        self.assertIn("changed slots: 1, repositioned starters: 0", depth.render_html(result))
         self.assertEqual(coverage(result, "lcb")["direct_deputy_ids"], ["reserve-lcb", "reserve-rcb"])
         self.assertEqual(coverage(result, "rcb")["direct_deputy_ids"], ["reserve-lcb", "reserve-rcb"])
         self.assertEqual(result["bench_only_matching_capacity"], 11)
@@ -58,6 +63,9 @@ class SquadDepthTests(unittest.TestCase):
         self.assertEqual(event["filled_slot_loss"], 0)
         # Stable CB tie-breaking may also swap the other centre-back.
         self.assertGreaterEqual(len(event["moved_starters"]), 2)
+        self.assertEqual(event["positional_change_count"], len(event["moved_starters"]))
+        self.assertEqual(event["changed_slot_count"], len(event["changes"]))
+        self.assertGreater(event["changed_slot_count"], event["positional_change_count"])
         self.assertEqual({m["player_id"] for m in event["moved_starters"]} & {"rb", "cb"}, {"rb", "cb"})
         self.assertEqual(event["promoted_player_ids"], ["reserve-cb"])
         self.assertGreater(event["reoptimised"]["outfield_total"], result["baseline"]["outfield_total"] - 10)
@@ -84,8 +92,24 @@ class SquadDepthTests(unittest.TestCase):
         self.assertIsNone(scenario(result, "keeper")["goalkeeper_score_loss"])
         self.assertIsNone(scenario(result, "keeper")["reoptimised"]["goalkeeper_total"])
         self.assertEqual(scenario(result, "defender")["filled_slot_loss"], 1)
+        for event in result["starter_loss_scenarios"]:
+            self.assertEqual(event["changed_slot_count"], 1)
+            self.assertEqual(event["positional_change_count"], 0)
+            self.assertEqual(len(event["newly_vacant_slot_ids"]), 1)
         self.assertEqual(coverage(result, "rcb")["effective_deputy_status"], "baseline_vacant")
         self.assertEqual(report([])["starter_loss_scenarios"], [])
+
+    def test_partial_baseline_change_counts_are_deterministic(self):
+        people = [person("lb", ["dl"], score=20), person("rb", ["dl", "dr"], score=19),
+                  person("reserve-rb", ["dr"], score=10)]
+        result = report(people)
+        self.assertEqual(result["summary"]["baseline_filled_slots"], 2)
+        lb = scenario(result, "lb")
+        self.assertEqual((lb["changed_slot_count"], lb["positional_change_count"]), (2, 1))
+        self.assertEqual(lb["moved_starters"], [{"player_id": "rb", "from_slot_id": "rb", "to_slot_id": "lb"}])
+        rb = scenario(result, "rb")
+        self.assertEqual((rb["changed_slot_count"], rb["positional_change_count"]), (1, 0))
+        self.assertEqual(result, report(list(reversed(people))))
 
     def test_policy_loan_and_category_evidence(self):
         category = person("category", [], score=11)
