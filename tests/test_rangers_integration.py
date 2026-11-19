@@ -91,7 +91,7 @@ class IntegrationTests(unittest.TestCase):
         if not candidates:
             self.export.write_text("Unique ID\n", encoding="utf-8")
         with patch.object(watcher, "fmsave", side_effect=self.fake_fmsave):
-            watcher.process(self.db, self.source, CAREER, self.export)
+            return watcher.process(self.db, self.source, CAREER, self.export)
 
     def dump(self):
         return list(self.db.iterdump())
@@ -333,14 +333,102 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual([p["date"] for p in defender["history"]], [DATE, self.game_date])
         self.assertEqual(defender["history"][-1]["attrs"]["Pace"], 20)
 
-    @unittest.expectedFailure
+    def watermark(self, career=CAREER):
+        row = self.db.execute("SELECT latest_game_date FROM career_chronology WHERE career=?", (career,)).fetchone()
+        return row[0] if row else None
+
     def test_known_chronology_unchanged_later_date_blocks_older_import(self):
+        self.assertTrue(self.process())
+        self.game_date = "2027-01-03"
+        self.assertTrue(self.process())
+        self.assertEqual(self.watermark(), self.game_date)
+        self.assertEqual(self.db.execute("SELECT MAX(game_date) FROM snapshots").fetchone()[0], DATE)
+        before = self.dump()
+        self.game_date = "2027-01-02"
+        # An older save with both changed attributes and a different filter.
+        self.cb["attributes_pace"] = "20"
+        with patch.object(watcher, "log") as log:
+            self.assertFalse(self.process([]))
+        self.assertTrue(any("Skipping older rotating save" in call.args[0] for call in log.call_args_list))
+        self.assertFalse(any("Accepted:" in call.args[0] for call in log.call_args_list))
+        self.assertEqual(self.dump(), before)
+        self.assertEqual(self.db.execute("SELECT MAX(last_seen_game_date) FROM cohort_membership").fetchone()[0], "2027-01-03")
+
+    def test_same_date_filters_can_be_reinstated(self):
+        self.process([{"Unique ID": "3"}])
+        first = self.active()
+        self.process([{"Unique ID": "4"}])
+        self.assertIn((watcher.identity(self.target_gk), "target"), self.active())
+        self.assertNotIn((watcher.identity(self.target), "target"), self.active())
+        self.process([])
+        self.assertFalse(any(cohort == "target" for _, cohort in self.active()))
+        self.process([{"Unique ID": "3"}])
+        self.assertEqual(self.active(), first)
+        self.assertEqual(self.watermark(), DATE)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM player_versions").fetchone()[0], 4)
+
+    def test_legacy_database_migration_uses_snapshot_and_cohort_evidence(self):
+        self.process()
+        self.game_date = "2027-01-03"
+        self.process([])
+        self.db.execute("UPDATE cohort_membership SET last_seen_game_date='2027-01-04' WHERE active=0")
+        # Another career has a dated snapshot but no dated membership.
+        self.db.execute("""INSERT INTO snapshots
+            (career,source_file,source_sha256,selection_sha256,game_date,imported_utc,player_count,changed_count)
+            VALUES ('snapshot-only','fixture','hash','filter','2027-02-01','fixture',0,0)""")
+        self.db.execute("UPDATE cohort_membership SET last_seen_game_date='invalid' WHERE cohort='squad'")
+        self.db.execute("UPDATE cohort_membership SET last_seen_game_date='2027-01-03' WHERE cohort='squad' AND player_key=?",
+                        (watcher.identity(self.cb),))
+        self.db.execute("DROP TABLE career_chronology")
+        self.db.commit()
+        before = self.dump()
+        with watcher.connect(self.dbpath) as migrated:
+            self.assertEqual(dict(migrated.execute("SELECT career,latest_game_date FROM career_chronology")),
+                             {CAREER: "2027-01-04", "snapshot-only": "2027-02-01"})
+        migrated.close()
+        self.assertEqual([line for line in self.dump() if "career_chronology" not in line], before)
+        self.game_date = "2027-01-02"
+        self.assertFalse(self.process())
+        self.assertEqual(self.watermark(), "2027-01-04")
+        reopened = watcher.connect(self.dbpath)
+        self.addCleanup(reopened.close)
+        self.assertEqual(dict(reopened.execute("SELECT career,latest_game_date FROM career_chronology")),
+                         {CAREER: "2027-01-04", "snapshot-only": "2027-02-01"})
+
+    def test_career_watermarks_are_independent(self):
         self.process()
         self.game_date = "2027-01-03"
         self.process()
-        self.game_date = "2027-01-02"
+        key = watcher.identity(self.cb)
+        result = watcher.import_selection(self.db, "other-career", self.source, "other", "filter",
+                                          {"info": {"in_game_date": DATE}}, {key: self.cb}, {key: {"squad"}}, None)
+        self.assertEqual(result, (1, 1))
+        self.assertEqual(self.watermark("other-career"), DATE)
+        self.assertEqual(self.watermark(), "2027-01-03")
+
+    def test_missing_and_invalid_dates_never_mutate_database(self):
         self.process()
-        self.assertEqual(self.db.execute("SELECT MAX(last_seen_game_date) FROM cohort_membership").fetchone()[0], "2027-01-03")
+        before = self.dump()
+        key = watcher.identity(self.cb)
+        for metadata in ({}, None, {"info": None}, {"game_date": "2027-02-30"}, {"game_date": "20270102"},
+                         {"game_date": 20270102}, {"game_date": "2027-01-02T12:00:00"}):
+            with self.subTest(metadata=metadata):
+                with self.assertRaisesRegex(ValueError, "Missing or invalid game date"):
+                    watcher.import_selection(self.db, CAREER, self.source, "new", "filter",
+                                             metadata, {key: self.cb}, {key: {"squad"}}, None)
+                self.assertEqual(self.dump(), before)
+
+    def test_watermark_write_failure_rolls_back_cohort_and_versions(self):
+        self.process()
+        self.db.execute("""CREATE TRIGGER reject_watermark BEFORE UPDATE ON career_chronology
+            BEGIN SELECT RAISE(ABORT, 'invented failure'); END""")
+        before = self.dump()
+        self.game_date = "2027-01-03"
+        self.cb["attributes_pace"] = "20"
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "invented failure"):
+            self.process([])
+        self.assertEqual(self.dump(), before)
+        self.assertEqual(self.watermark(), DATE)
 
     @unittest.expectedFailure
     def test_known_incoming_loan_is_not_outgoing(self):
