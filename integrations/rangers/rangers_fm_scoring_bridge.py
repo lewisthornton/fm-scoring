@@ -526,11 +526,15 @@ def sync_once(args, root):
     policy_path = getattr(args, "xi_policy", None)
     policy = json.loads(policy_path.read_text(encoding="utf-8")) if policy_path else None
     xi = xi_module.build_optimal_xi(formation, assessment, benchmark, policy=policy)
+    depth_module = load_checkout_module(root, "squad_depth.py", "Squad depth")
+    depth = depth_module.build_squad_depth(formation, assessment, benchmark, optimizer=xi_module, policy=policy, baseline=xi)
     outdir = root / "out" / args.slug
     # Publish the honest partial XI even if the legacy renderer cannot score
     # a goalkeeper or has no active squad. Legacy failure semantics remain.
     write_atomic(outdir / "optimal_xi.json", json.dumps(xi, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     write_atomic(outdir / "optimal_xi.html", xi_module.render_html(xi))
+    write_atomic(outdir / "squad_depth.json", json.dumps(depth, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+    write_atomic(outdir / "squad_depth.html", depth_module.render_html(depth))
     if not people:
         raise RuntimeError(f"No active squad or targets for career {args.career!r}. Run the autosave watcher first.")
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
@@ -565,6 +569,7 @@ def sync_once(args, root):
     log(f"Tactical assessments: {outdir / 'tactical_assessments.json'}")
     log(f"League benchmarks: {outdir / 'league_benchmarks.json'} ({benchmark['status']})")
     log(f"Starting XI: {outdir / 'optimal_xi.html'} ({xi['solver']['status']})")
+    log(f"Squad depth: {outdir / 'squad_depth.html'}")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
