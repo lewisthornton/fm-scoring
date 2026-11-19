@@ -110,7 +110,7 @@ def benchmark_context(benchmark, assessment):
     return {(item["player_id"], item["profile"]): item for item in benchmark["comparisons"]}, None
 
 
-def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None):
+def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excluded_player_ids=()):
     """Use already scoped assessments; eligibility and objective are separate from solver."""
     policy = eligibility_policy(policy)
     slots = formation["slots"]
@@ -121,6 +121,10 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None):
     by_id = {p["player_id"]: p for p in players}
     if len(by_id) != len(players):
         raise ValueError("Duplicate stable player identity")
+    removed = set(excluded_player_ids)
+    if not removed <= by_id.keys():
+        raise ValueError("Unknown hypothetical exclusion player ID")
+    players = [p for p in players if p["player_id"] not in removed]
     evidence = {(p["player_id"], s["slot_id"]): s for p in players for s in p["slots"]}
     edges, excluded = {}, []
     for p in players:
@@ -221,7 +225,7 @@ def render_html(report):
     return ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Optimal XI</title>'
             '<style>body{font:16px system-ui;margin:2rem;background:#101923;color:#e8f0f4}table{border-collapse:collapse;width:100%}th,td{padding:.65rem;border-bottom:1px solid #425362;text-align:left}th{background:#233648}a{color:#9cdefa}</style>'
             f'<h1>{text(report["formation"]["name"])} — starting XI</h1><p>{text(report["game_date"])} · {text(report["solver"]["status"])} · {report["solver"]["filled_slots"]}/11 slots</p>'
-            '<p>Uncalibrated attribute-based selection model. <a href="optimal_xi.json">Full evidence and exclusions</a> · <a href="recruitment.html">Recruitment</a></p>'
+            '<p>Uncalibrated attribute-based selection model. <a href="optimal_xi.json">Full evidence and exclusions</a> · <a href="squad_depth.html">Squad depth</a> · <a href="recruitment.html">Recruitment</a></p>'
             '<table><thead><tr><th>Slot</th><th>Player</th><th>Profile</th><th>Score</th><th>Accepted familiarity</th><th>IP</th><th>OOP</th><th>League percentile</th><th>Warnings</th></tr></thead><tbody>'
             + "".join(rows) + '</tbody></table><p>Outfield total: ' + text(f'{report["outfield_total"]:.2f}')
             + ' · Goalkeeper score: ' + text(f'{report["goalkeeper_total"]:.2f}' if report["goalkeeper_total"] is not None else None)
