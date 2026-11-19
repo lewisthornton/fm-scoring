@@ -169,3 +169,14 @@ without changing existing page data. Tests cover both formations, optional
 phase responsibilities, stable ordering, malformed input, watch signatures
 and byte-identical default/custom HTML. No scoring model or player data
 migration is required.
+
+## Tactical position evidence and assessments
+
+See [the assessment contract](../formations/ASSESSMENTS.md) for source evidence,
+typed JSON schema and IP/OOP calculation. `test_tactical_assessment.py` covers
+strict individual position ratings, bounded category fallback, missing and
+zero-weight phase evidence, existing weighted profiles, goalkeeper domains
+and deterministic identity-aware output. Integration tests verify scoped
+membership and loan availability, model/formation provenance, unchanged-record
+dates, no unrelated player leakage, default/custom formation parity and
+standalone launcher compatibility. The 57 previous tests remain passing.
