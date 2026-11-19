@@ -503,6 +503,83 @@ class IntegrationTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(bridge.loan_state(raw, "100"), ("unknown", "unknown"))
 
+    def test_uncertain_incumbents_are_separate_from_confirmed_uplift(self):
+        uncertain = player(9, "Fixture Uncertain Defender", squad=True)
+        uncertain["on_loan"] = ""
+        for name in MODEL["outfield"]["CB"]:
+            uncertain["attributes_" + name.lower().replace(" ", "_")] = "20"
+        self.world.append(uncertain)
+        self.process()
+        self.prepare_renderer()
+        section = self.dashboard(self.render())["roles"]["CB"]
+        self.assertEqual(section["incumbent"]["name"], self.cb["name"])
+        self.assertEqual(section["uncertain_incumbents"], [
+            {"name": uncertain["name"], "score": 20.0, "fit": 20},
+        ])
+        target = section["candidates"][0]
+        self.assertAlmostEqual(target["uplift"],
+                               self.expected_score(self.target, MODEL["outfield"]["CB"]) -
+                               self.expected_score(self.cb, MODEL["outfield"]["CB"]), places=3)
+
+        # With no confirmed familiar defender, uplift and its attribute
+        # breakdown must remain undefined even when uncertain players score.
+        self.game_date = "2027-01-02"
+        self.cb["on_loan"] = ""
+        self.process()
+        out = self.render()
+        section = self.dashboard(out)["roles"]["CB"]
+        self.assertIsNone(section["incumbent"])
+        self.assertEqual({p["name"] for p in section["uncertain_incumbents"]},
+                         {self.cb["name"], uncertain["name"]})
+        self.assertIsNone(section["candidates"][0]["uplift"])
+        self.assertEqual(section["candidates"][0]["attributes"], [])
+
+    def test_uncertain_parent_uid_retains_possible_owned_players(self):
+        players = [player(10, "Missing Flag"), player(11, "Conflicting Flag"),
+                   player(12, "Invalid Flag"), player(13, "Unrelated Parent")]
+        for record, flag in zip(players, ("", "false", "invalid", "")):
+            record.update(on_loan=flag, loan_parent_club_uid="100")
+        # A name alone cannot establish possible Rangers ownership.
+        players[-1].update(loan_parent_club_uid="300", loan_parent_club_name="Rangers")
+        self.world.extend(players)
+        self.process([])
+        for record in players[:-1]:
+            self.assertIn((watcher.identity(record), "squad"), self.active())
+        self.assertNotIn((watcher.identity(players[-1]), "squad"), self.active())
+        self.prepare_renderer()
+        out = self.render()
+        states = {p["name"]: (p["loan_state"], p["availability"])
+                  for p in self.dashboard(out)["squad_availability"]}
+        native = {p["name"]: p for p in self.native_data(out, "squad")}
+        for record in players[:-1]:
+            self.assertEqual(states[record["name"]], ("unknown", "unknown"))
+            self.assertEqual(native[record["name"]]["loan"], "unknown")
+        self.assertNotIn(players[-1]["name"], states)
+
+    def test_missing_loan_flag_column_preserves_uncertain_parent_uid(self):
+        owned = player(10, "Fixture Possible Loan")
+        owned["loan_parent_club_uid"] = "100"
+        self.world.append(owned)
+        for record in self.world:
+            del record["on_loan"]
+        self.process([])
+        self.assertIn((watcher.identity(owned), "squad"), self.active())
+        people, _, _ = bridge.get_database(self.dbpath, CAREER)
+        self.assertTrue(all(p["availability"] == "unknown" for p in people))
+
+    def test_world_export_timing_and_cleanup_with_and_without_targets(self):
+        for candidates in (self.candidates, []):
+            with self.subTest(candidates=candidates):
+                with patch.object(watcher, "log") as log:
+                    self.process(candidates)
+                messages = [call.args[0] for call in log.call_args_list]
+                self.assertIn("Starting temporary full-world player export", messages)
+                self.assertTrue(any(re.fullmatch(
+                    r"Temporary full-world player export completed in \d+\.\d{2}s; \d+\.\d{2} MiB \(temporary\)",
+                    message) for message in messages))
+                self.assertTrue(all(not path.parent.exists() for path in self.copies))
+                self.assertNotIn(self.unselected["name"], str(self.dump()))
+
     def test_loan_availability_and_native_history(self):
         outgoing = player(6, "Fixture Outgoing")
         outgoing.update(on_loan="true", loan_parent_club_uid="100", loan_parent_club_name="Rangers")
