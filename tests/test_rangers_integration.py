@@ -117,7 +117,7 @@ class IntegrationTests(unittest.TestCase):
         return set(self.db.execute("SELECT player_key, cohort FROM cohort_membership WHERE active=1"))
 
     def prepare_renderer(self):
-        for name in ("score.py", "scoring.py", "formation.py", "tactical_assessment.py", "league_benchmarks.py", "optimal_xi.py", "template.html", "charts.html", "theme.css"):
+        for name in ("score.py", "scoring.py", "formation.py", "tactical_assessment.py", "league_benchmarks.py", "optimal_xi.py", "squad_depth.py", "template.html", "charts.html", "theme.css"):
             shutil.copyfile(ROOT / name, self.root / name)
         shutil.copytree(ROOT / "weights", self.root / "weights")
         shutil.copytree(ROOT / "formations", self.root / "formations")
@@ -149,6 +149,7 @@ class IntegrationTests(unittest.TestCase):
         expected_assessments = (out / "tactical_assessments.json").read_bytes()
         expected_benchmarks = (out / "league_benchmarks.json").read_bytes()
         expected_xi = (out / "optimal_xi.json").read_bytes()
+        expected_depth = (out / "squad_depth.json").read_bytes()
         launcher = self.root / "FMAnalytics"
         launcher.mkdir()
         for name in ("rangers_fm_scoring_bridge.py", "rangers_club.py"):
@@ -173,6 +174,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
         self.assertEqual((out / "league_benchmarks.json").read_bytes(), expected_benchmarks)
         self.assertEqual((out / "optimal_xi.json").read_bytes(), expected_xi)
+        self.assertEqual((out / "squad_depth.json").read_bytes(), expected_depth)
         self.assertEqual(standalone_db.read_bytes(), before)
 
         # An unrelated module beside the launcher must not shadow the selected
@@ -182,6 +184,7 @@ class IntegrationTests(unittest.TestCase):
         (launcher / "tactical_assessment.py").write_text("raise AssertionError('wrong assessment module')\n", encoding="utf-8")
         (launcher / "league_benchmarks.py").write_text("raise AssertionError('wrong benchmark module')\n", encoding="utf-8")
         (launcher / "optimal_xi.py").write_text("raise AssertionError('wrong XI module')\n", encoding="utf-8")
+        (launcher / "squad_depth.py").write_text("raise AssertionError('wrong depth module')\n", encoding="utf-8")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html")}, expected)
@@ -189,6 +192,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual((out / "tactical_assessments.json").read_bytes(), expected_assessments)
         self.assertEqual((out / "league_benchmarks.json").read_bytes(), expected_benchmarks)
         self.assertEqual((out / "optimal_xi.json").read_bytes(), expected_xi)
+        self.assertEqual((out / "squad_depth.json").read_bytes(), expected_depth)
         (self.root / "scoring.py").rename(self.root / "scoring.disabled")
         result = subprocess.run(command, cwd=launcher, capture_output=True, encoding="utf-8", errors="replace")
         self.assertNotEqual(result.returncode, 0)
@@ -247,6 +251,11 @@ class IntegrationTests(unittest.TestCase):
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         assigned_defender = next(r for r in xi["assignments"] if r["player_id"] == defender_id)
         self.assertEqual(assigned_defender["league_benchmark"]["percentile"], defender["percentile"])
+        depth = json.loads((out / "squad_depth.json").read_text(encoding="utf-8"))
+        edge = next(e for row in depth["coverage"] if row["slot_id"] == assigned_defender["slot_id"]
+                    for e in row["eligible_players"] if e["player_id"] == defender_id)
+        self.assertEqual(edge["league"]["comparison"]["percentile"], defender["percentile"])
+        self.assertEqual(edge["league"]["comparison"]["contributing_clubs"], first["reference"]["profiles"]["CB"]["contributing_clubs"])
         self.assertNotIn("Unselected league player", path.read_text(encoding="utf-8"))
         self.assertNotIn("Unselected league player", str(self.dump()))
         self.assertEqual(sum(c[:2] == ("export", "players") for c in self.commands), 1)
@@ -299,7 +308,7 @@ class IntegrationTests(unittest.TestCase):
         default = json.loads((out / "formation.json").read_text(encoding="utf-8"))
         default_assessment = json.loads((out / "tactical_assessments.json").read_text(encoding="utf-8"))
         self.assertEqual(default["name"], "Conventional 4-3-3")
-        old_html = {p.name: p.read_bytes() for p in out.glob("*.html") if p.stem != "optimal_xi"}
+        old_html = {p.name: p.read_bytes() for p in out.glob("*.html") if p.stem not in ("optimal_xi", "squad_depth")}
         self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
         selected = json.loads((out / "formation.json").read_text(encoding="utf-8"))
         assessment = json.loads((out / "tactical_assessments.json").read_text(encoding="utf-8"))
@@ -309,7 +318,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual((right_back["ip"]["position"], right_back["oop"]["position"]), ("dc", "dr"))
         self.assertEqual(selected["name"], "Asymmetric 4-2-3-1")
         self.assertEqual(len(selected["slots"]), 11)
-        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html") if p.stem != "optimal_xi"}, old_html)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html") if p.stem not in ("optimal_xi", "squad_depth")}, old_html)
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         self.assertEqual(xi["formation"], assessment["formation"])
         before = (out / "formation.json").read_bytes()
@@ -331,7 +340,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("Formation", result.stdout)
         self.assertEqual((out / "formation.json").read_bytes(), before)
         self.assertEqual((out / "tactical_assessments.json").read_bytes(), before_assessment)
-        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html") if p.stem != "optimal_xi"}, old_html)
+        self.assertEqual({p.name: p.read_bytes() for p in out.glob("*.html") if p.stem not in ("optimal_xi", "squad_depth")}, old_html)
 
     def test_tactical_assessment_scoped_identity_availability_and_provenance(self):
         self.target["name"] = self.cb["name"]
@@ -400,8 +409,17 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn(self.unselected["name"], xi_path.read_text(encoding="utf-8"))
         self.assertNotIn(other["name"], xi_path.read_text(encoding="utf-8"))
         before_xi = xi_path.read_bytes()
+        depth_path = out / "squad_depth.json"
+        before_depth = depth_path.read_bytes()
+        depth = json.loads(before_depth)
+        self.assertEqual(depth["baseline"], xi)
+        self.assertNotIn(self.unselected["name"], before_depth.decode("utf-8"))
+        self.assertNotIn(other["name"], before_depth.decode("utf-8"))
+        for row in depth["coverage"]:
+            self.assertTrue(all(json.loads(e["player_id"])[1] == CAREER for e in row["eligible_players"]))
         self.render("--formation", str(self.root / "formations" / "asymmetric-4231.toml"))
         self.assertEqual(xi_path.read_bytes(), before_xi)
+        self.assertEqual(depth_path.read_bytes(), before_depth)
         self.assertEqual(self.dump(), before)
 
     def test_watch_signature_tracks_formation_changes(self):
@@ -437,7 +455,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("No active squad or targets", result.stdout)
         out = self.root / "out" / SLUG
-        self.assertEqual({p.name for p in out.iterdir()}, {"optimal_xi.json", "optimal_xi.html"})
+        self.assertEqual({p.name for p in out.iterdir()}, {"optimal_xi.json", "optimal_xi.html", "squad_depth.json", "squad_depth.html"})
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         self.assertEqual(xi["solver"]["status"], "infeasible")
         self.assertIsNone(xi["game_date"])
@@ -468,7 +486,7 @@ class IntegrationTests(unittest.TestCase):
         expected_ids = {p["name"]: json.dumps(["rangers", CAREER, watcher.identity(p)], separators=(",", ":"))
                         for p in self.world if p is not self.unselected}
         for path in sorted(out.glob("*.html")):
-            if path.stem == "optimal_xi":
+            if path.stem in ("optimal_xi", "squad_depth"):
                 continue  # new independent view; all original frozen hashes remain unchanged
             body = path.read_text(encoding="utf-8")
             if path.stem == "recruitment":
@@ -529,10 +547,13 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.dump(), before)
         self.assertEqual(self.dbpath.read_bytes(), bytes_before)
         self.assertEqual({p.stem for p in out.glob("*.html")},
-                         {"squad", "players", "last", "staff", "last_staff", "charts", "filters", "recruitment", "optimal_xi"})
+                         {"squad", "players", "last", "staff", "last_staff", "charts", "filters", "recruitment", "optimal_xi", "squad_depth"})
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         self.assertEqual(xi["solver"]["status"], "incomplete")
         self.assertEqual({r["display_name"] for r in xi["assignments"] if r["player_id"]}, {self.cb["name"], self.gk["name"]})
+        depth = json.loads((out / "squad_depth.json").read_text(encoding="utf-8"))
+        self.assertEqual(depth["baseline"], xi)
+        self.assertEqual(len(depth["starter_loss_scenarios"]), 2)
         squad = {p["name"]: p for p in self.native_data(out, "squad")}
         targets = {p["name"]: p for p in self.native_data(out, "last")}
         self.assertEqual(set(squad), {self.cb["name"], self.gk["name"]})
@@ -692,7 +713,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Goalkeeper scoring incomplete", result.stdout)
         out = self.root / "out" / SLUG
-        self.assertEqual({p.name for p in out.iterdir()}, {"optimal_xi.html", "optimal_xi.json"})
+        self.assertEqual({p.name for p in out.iterdir()}, {"optimal_xi.html", "optimal_xi.json", "squad_depth.html", "squad_depth.json"})
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         self.assertIsNone(next(r for r in xi["assignments"] if r["profile"] == "GK")["player_id"])
 
