@@ -37,9 +37,29 @@ but no attributes are observed, the old sum is zero. The win index and keeper
 points are separate experimental quantities, neither a calibrated match
 probability. No weights or arithmetic are changed.
 
-Keep the bridge in the repository's `integrations/rangers/` directory with
-`scoring.py` at the repository root when updating the checkout. Both existing CLI
-entrypoints and arguments are preserved.
+Both launch layouts are supported, using the selected checkout's exact
+`scoring.py` for bridge and native scoring. For the existing standalone Windows
+launcher, update the repository checkout and replace the bridge and its
+`rangers_club.py` companion in the launcher directory with the versions from
+`integrations/rangers/`. Leave the local database and launcher arguments as-is:
+
+```powershell
+py C:\FMAnalytics\rangers_fm_scoring_bridge.py --fm-scoring-root "C:\path\to\fm-scoring" --watch
+```
+
+The database still defaults to the file next to the bridge. Alternatively
+launch from the repository with `--db` pointing at the existing database:
+
+```powershell
+py C:\path\to\fm-scoring\integrations\rangers\rangers_fm_scoring_bridge.py --fm-scoring-root "C:\path\to\fm-scoring" --db "C:\FMAnalytics\fm_rangers_scoped.sqlite3" --watch
+```
+
+No scoring module needs to be copied beside the standalone bridge. The selected
+checkout must include the new root module; an older checkout without it is
+rejected explicitly before rendering. Both CLI entrypoints and arguments are
+preserved. A regression test copies the launcher and companion into a separate
+directory, uses an invented database at the default path, and verifies identical
+HTML output, read-only database access, and exact checkout module selection.
 
 `test_scoring.py` freezes pre-refactor numerical vectors for every fm27v2
 positional profile, interpolation, missing attributes, experimental metrics,
