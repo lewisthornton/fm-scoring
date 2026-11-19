@@ -343,7 +343,7 @@ function render(again = true) {
     if (c.fmt === "yesno") return `<td class="${v === "yes" ? "t4" : "dim"}${at}">${v}</td>`;
     if (c.fmt) return `<td class="num ${tier(v, RANGE[c.fmt])}${at}">${FMT[c.fmt](v)}</td>`;
     if (c.key === "posText") return `<td class="${at}">${r.posHtml}</td>`;
-    if (c.key === "name") return `<td class="${at}">${v}${r.team ? `<span class="team">${r.team}</span>` : ""}${r.loan ? `<span class="loan ${r.loan}"${r.loanFrom ? ` title="on loan from ${esc(r.loanFrom)}"` : ""}>${loanLabel(r)}</span>` : ""}</td>`;
+    if (c.key === "name") return `<td class="${at}"${r.player_id ? ` title="${esc(r.player_id)}"` : ""}>${esc(r.display_name || v)}${r.team ? `<span class="team">${r.team}</span>` : ""}${r.loan ? `<span class="loan ${r.loan}"${r.loanFrom ? ` title="on loan from ${esc(r.loanFrom)}"` : ""}>${loanLabel(r)}</span>` : ""}</td>`;
     return `<td class="${c.num ? "num" : "text"}${at}">${v}</td>`;
   }).join("") + "</tr>"; }).join("");
   document.querySelector("td.cur")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -488,12 +488,13 @@ function turnPage(step) {  // to the next / previous page's first row
 // Player history: one row per observation date, then attribute values by date
 function showDetail(r) {
   const H = r.history, last = H[H.length - 1], vs = H.some(h => h.vsAge != null), win = H.some(h => h.win != null), pts = H.some(h => h.pts != null);
+  const renamed = H.some(h => h.name && h.name !== r.name);
   const pos = COLS.filter(c => c.fmt === "f1" && H.some(h => h[c.key] != null)).map(c => c.key);
   const chg = (v, p) => p == null || Math.abs(v - p) < 0.05 ? "" :
     `<span class="chg ${v > p ? "t4" : "t0"}">${FMT.delta(v - p)}</span>`;
   const scoreRows = H.map((h, i) => {
     const p = H[i - 1];
-    return `<tr><td>${h.date}</td><td class="text">${h.club}</td><td class="num">${h.age ?? "–"}</td>` +
+    return `<tr><td>${h.date}</td>${renamed ? `<td class="text">${esc(h.name || r.name)}</td>` : ""}<td class="text">${h.club}</td><td class="num">${h.age ?? "–"}</td>` +
       pos.map(k => h[k] == null ? `<td class="num dim">–</td>` :  // e.g. seen before the views showed every attribute the position needs
         `<td class="num ${tier(h[k], RANGE.f1)}">${FMT.f1(h[k])}${chg(h[k], p?.[k])}</td>`).join("") +
       (!win ? "" : h.win == null ? `<td class="num dim">–</td>` : `<td class="num ${tier(h.win, RANGE.win)}">${FMT.win(h.win)}${chg(h.win, p?.win)}</td>`) +
@@ -516,10 +517,10 @@ function showDetail(r) {
       `<td class="num ${tier(v, RANGE.attr)}">${v}${p == null || p === v ? "" : `<span class="chg ${v > p ? "t4" : "t0"}">${v > p ? "+" : "−"}${Math.abs(v - p)}</span>`}</td>`;
   }).join("") + "</tr>").join("");
   document.getElementById("detailbody").innerHTML = `
-    <div class="ttitle">${r.name} <span class="sub">· ${[r.club, r.age != null && r.age + "y",
+    <div class="ttitle">${esc(r.display_name || r.name)} <span class="sub">· ${[r.club, r.age != null && r.age + "y",
       ...("job" in r ? [r.job, r.personality] : ["left foot " + (last.leftFoot ?? "–"), r.loan && loanLabel(r) + (r.loanFrom ? " from " + esc(r.loanFrom) : ""), r.posHtml])].filter(Boolean).join(" · ")}</span></div>
     ${H.length === 1 ? `<div class="sub">Only one observation so far (${last.date}); changes appear once there's a later game date (screenshots or an import).</div>` : ""}
-    <table><thead><tr><th>Date</th><th>Club</th><th class="num">Age</th>${pos.map(k => `<th class="num">${k}</th>`).join("")}${win ? `<th class="num">%win</th>` : ""}${pts ? `<th class="num">GKpts</th>` : ""}<th>Best</th>${vs ? `<th class="num">vs Age</th>` : ""}</tr></thead>
+    <table><thead><tr><th>Date</th>${renamed ? "<th>Name</th>" : ""}<th>Club</th><th class="num">Age</th>${pos.map(k => `<th class="num">${k}</th>`).join("")}${win ? `<th class="num">%win</th>` : ""}${pts ? `<th class="num">GKpts</th>` : ""}<th>Best</th>${vs ? `<th class="num">vs Age</th>` : ""}</tr></thead>
       <tbody>${scoreRows}</tbody></table>
     <div class="ttitle">Attributes</div>
     <table><thead>${wpos.length ? `<tr><th></th><th class="group wt${gr ? " nb" : ""}">weight</th>${gr ? `<th class="group wt">growth</th>` : ""}<th class="group" colspan="${AH.length}">value</th></tr>` : ""}
@@ -624,3 +625,4 @@ if (PAGE === "filters") renderFilters(); else render();
 </script>
 </body>
 </html>
+

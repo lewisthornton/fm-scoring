@@ -123,11 +123,38 @@ manager saves, and some club/parent identifiers are unconfirmed fields. The
 integration cannot distinguish two separate careers with identical club and
 manager identifiers, or verify actual match eligibility from these exports.
 
-One test deliberately uses unittest's expectedFailure marker:
+## Stable player observations
 
-- Identity: a newly active namesake changes the native CSV display key and splits
-  existing history.
+Native player CSV files may include the optional `Player ID` column. It is an
+opaque, nonempty string treated as metadata, and is separate from the observed
+`Name`. Blank/missing IDs retain the legacy name/alias grouping. A producer
+must namespace IDs if it combines observations from distinct careers or sources.
+The Rangers bridge writes a JSON array `["rangers", career, player_key]` using
+the existing SQLite key unchanged; native fmsave squad imports use
+`["fmsave", save, uid, unique_id, birth_date]`. Names, clubs and cohort membership
+are not part of either identity. Use distinct career keys (or native save slugs)
+for distinct saves. No database migration is required.
 
-When fixing each issue, remove its marker and keep the regression assertion.
-An unexpected success fails the suite, so these markers cannot silently remain
-after a fix.
+Identified rows are grouped by ID and date; same-date files retain the existing
+sorted-file precedence and merge observed attributes. History retains observed
+names, clubs, scores and dates, and the latest name is displayed. Duplicate
+display names are numbered for presentation only; the table's title attribute
+exposes the ID and row selection opens the corresponding history. Where a player
+has changed name, the history includes a name column. Name-only config selectors
+still work when unique; use `id:<Player ID>` in last_names, signed, released,
+recalled or intake_kept to select an exact identity when names are ambiguous.
+Private IDs are stripped on public share-leagues exports.
+
+Existing observations are not backfilled or deleted. A legacy name-only history
+and an identified history remain separate even when their names match, since
+the old file cannot prove identity. Existing aliases apply to legacy names.
+The ordinary same-date bridge refresh still replaces its current observation
+files. A newly identified history begins with the first identified observation;
+old name-only histories remain available separately and cannot be safely joined
+automatically. Do not reuse a career/save namespace for a different save.
+
+The numerical parity test retains every original payload digest after checking
+and removing only the newly added `player_id` and historical `name` fields from
+the three native player tables. It also checks the new full payload digests.
+Charts, filters, recruitment and staff data are unchanged in the unambiguous
+fixture. The namesake expected failure now passes as a regular regression.
