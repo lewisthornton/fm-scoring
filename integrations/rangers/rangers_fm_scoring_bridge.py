@@ -368,10 +368,10 @@ def dashboard_data(people, weights, date, source_files, symbol):
     roles = [*weights["outfield"], "GK"]
     result = {}
     for role in roles:
-        # Keep the existing score-based comparison against the currently
-        # registered squad, excluding newly included outgoing loanees.
-        group = [p for p in squad if p["availability"] != "unavailable" and
-                 p["scores"].get(role) is not None and (p["fit"].get(role) or 0) >= 15]
+        familiar = [p for p in squad if p["scores"].get(role) is not None and (p["fit"].get(role) or 0) >= 15]
+        group = [p for p in familiar if p["availability"] == "available"]
+        uncertain = sorted((p for p in familiar if p["availability"] == "unknown"),
+                           key=lambda p: p["scores"][role], reverse=True)
         incumbent = max(group, key=lambda p: p["scores"][role], default=None)
         candidates = []
         for t in targets:
@@ -392,6 +392,8 @@ def dashboard_data(people, weights, date, source_files, symbol):
             "label": DISPLAY_POSITION.get(role, role),
             "incumbent": ({"name": incumbent["name"], "score": round(incumbent["scores"][role], 3),
                            "fit": incumbent["fit"].get(role)} if incumbent else None),
+            "uncertain_incumbents": [{"name": p["name"], "score": round(p["scores"][role], 3),
+                                      "fit": p["fit"][role]} for p in uncertain],
             "candidates": candidates,
         }
     return {"meta": {"date": date, "squad": len(squad), "targets": len(targets),
@@ -414,7 +416,7 @@ HTML = r'''<!doctype html>
 <div class="cards"><div class="card"><div class="muted small">Rangers players</div><div class="num" id="squadCount">—</div></div><div class="card"><div class="muted small">Active filtered targets</div><div class="num" id="targetCount">—</div></div><div class="card"><div class="muted small">Position-qualified</div><div class="num" id="eligibleCount">—</div></div><div class="card"><div class="muted small">Above current best</div><div class="num" id="upgradeCount">—</div></div></div>
 <p class="subtitle" id="availability"></p>
 <div class="control"><label>Position <select id="role"></select></label><label>Sort by <select id="sort"><option value="uplift">Upgrade over Rangers player ↓</option><option value="score">Position score ↓</option><option value="value">Transfer value ↑</option><option value="wage">Weekly wage ↑</option><option value="age">Age ↑</option></select></label><label>Find player <input id="find" type="text" placeholder="Name or club"></label><label class="check"><input id="natural" type="checkbox" checked> Natural / accomplished only (15+)</label><label class="check"><input id="upgrade" type="checkbox"> Only upgrades</label></div>
-<div class="info"><h2>Best familiar Rangers player <span class="muted small" id="roleTitle"></span></h2><div id="incumbent"></div></div>
+<div class="info"><h2>Best available familiar Rangers player <span class="muted small" id="roleTitle"></span></h2><div id="incumbent"></div><p class="muted small" id="uncertainIncumbents"></p></div>
 <div class="columns"><section class="tablebox"><table><thead><tr><th>Candidate</th><th>Club</th><th class="right">Age</th><th class="right">Role fit</th><th class="right">Score</th><th class="right">Upgrade</th><th class="right">Value*</th><th class="right">Wage/wk*</th></tr></thead><tbody id="candidates"></tbody></table><div id="empty" class="empty" style="display:none">No targets match these filters. Try unchecking natural/accomplished or changing position.</div></section><section class="detail" id="detail"><h2 id="detailTitle"></h2><div class="muted small" id="detailInfo"></div><div id="differences" style="margin-top:14px"></div></section></div>
 <p class="footnote">*Money is read from the save's base units and is shown with the configured display symbol (check in-game before relying on it). Transfer value is <strong>not</strong> asking price. Position score is fm-scoring's weighted attribute mean (1–20), not a win-probability prediction. Role fit 18–20 = natural, 15–17 = accomplished; under 15 is a calculated attribute score at an unfamiliar position. This tool uses save-file true attributes (including potentially unscouted values), so it is not a fog-of-war-respecting scouting report. Target eligibility comes only from your most recently imported filtered F9 export, not an interest prediction.</p>
 <p class="footnote" id="source"></p>
@@ -431,7 +433,8 @@ const countAvailability=state=>D.squad_availability.filter(p=>p.availability===s
 $('availability').textContent='Club-level selection: '+countAvailability('available')+' available · '+countAvailability('unavailable')+' away on loan · '+countAvailability('unknown')+' unknown. Injury, suspension and registration eligibility are unverified.';
 try{const v=JSON.parse(localStorage.getItem('fm:rangers:recruitment')||'{}');for(const k of ['role','sort','find'])if(v[k]!=null)$(k).value=v[k];for(const k of ['natural','upgrade'])if(v[k]!=null)$(k).checked=v[k];}catch(e){}
 for(const id of ['role','sort','find','natural','upgrade'])$(id).addEventListener(id==='find'?'input':'change',()=>{try{localStorage.setItem('fm:rangers:recruitment',JSON.stringify(Object.fromEntries(['role','sort','find','natural','upgrade'].map(k=>[k,['natural','upgrade'].includes(k)?$(k).checked:$(k).value]))));}catch(e){}render();});render();}
-function render(){const role=$('role').value,section=D.roles[role];$('roleTitle').textContent='('+role+')';const base=section.incumbent;$('incumbent').textContent=base?base.name+' · '+fmt(base.score)+' position score · '+(base.fit>=18?'Natural':base.fit>=15?'Accomplished':'Unfamiliar'):'No Rangers player with confirmed natural/accomplished familiarity; upgrades cannot be determined.';
+function render(){const role=$('role').value,section=D.roles[role];$('roleTitle').textContent='('+role+')';const base=section.incumbent;$('incumbent').textContent=base?base.name+' · '+fmt(base.score)+' position score · '+(base.fit>=18?'Natural':base.fit>=15?'Accomplished':'Unfamiliar'):'No confirmed available natural/accomplished Rangers player; upgrades cannot be determined.';
+$('uncertainIncumbents').textContent=section.uncertain_incumbents.length?'Availability unknown (excluded from uplift): '+section.uncertain_incumbents.map(p=>p.name+' ('+fmt(p.score)+')').join(', '):'';
 let targets=section.candidates.filter(t=>(!$('natural').checked||t.fit>=15)&&(!$('upgrade').checked||(t.uplift!=null&&t.uplift>0))&&(t.name+' '+t.club).toLowerCase().includes($('find').value.trim().toLowerCase()));
 const sort=$('sort').value;targets.sort((a,b)=>sort==='age'?((a.age??999)-(b.age??999)):sort==='value'||sort==='wage'?((a[sort]??Infinity)-(b[sort]??Infinity)):((b[sort]??-Infinity)-(a[sort]??-Infinity))||((b.score??0)-(a.score??0)));
 $('eligibleCount').textContent=section.candidates.filter(t=>t.fit>=15).length;$('upgradeCount').textContent=section.candidates.filter(t=>t.fit>=15&&t.uplift!=null&&t.uplift>0).length;
