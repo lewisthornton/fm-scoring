@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS cohort_membership (
     PRIMARY KEY(career,player_key,cohort)
 );
 CREATE INDEX IF NOT EXISTS ix_current_cohort ON cohort_membership(career,cohort,active);
+CREATE TABLE IF NOT EXISTS career_chronology (
+    career TEXT PRIMARY KEY,
+    latest_game_date TEXT NOT NULL
+);
 '''
 
 
@@ -297,37 +301,72 @@ def optional_int(v):
     except(ValueError,TypeError):return None
 
 
+def valid_game_date(value):
+    """Only canonical, calendar-valid ISO dates can establish chronology."""
+    if not isinstance(value,str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}',value):
+        return None
+    try:
+        return datetime.strptime(value,'%Y-%m-%d').date().isoformat()
+    except ValueError:
+        return None
+
+
+def initialise_chronology(db):
+    """Backfill unmigrated careers from all dated evidence, including inactive cohorts."""
+    with db:
+        db.execute('BEGIN IMMEDIATE')
+        evidence=db.execute('''
+            SELECT s.career,s.game_date FROM snapshots s
+            WHERE NOT EXISTS (SELECT 1 FROM career_chronology c WHERE c.career=s.career)
+            UNION
+            SELECT m.career,m.last_seen_game_date FROM cohort_membership m
+            WHERE NOT EXISTS (SELECT 1 FROM career_chronology c WHERE c.career=m.career)
+        ''')
+        latest={}
+        for career,value in evidence:
+            date=valid_game_date(value)
+            if date and date>latest.get(career,''):
+                latest[career]=date
+        db.executemany('INSERT INTO career_chronology(career,latest_game_date) VALUES (?,?)',
+                       latest.items())
+
+
 def connect(path):
     path.parent.mkdir(parents=True,exist_ok=True)
     db=sqlite3.connect(path,timeout=60)
     db.execute('PRAGMA busy_timeout=60000')
     db.execute('PRAGMA journal_mode=WAL')
     db.executescript(SCHEMA)
+    initialise_chronology(db)
     return db
 
 
 def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membership,export):
-    info=metadata.get('info',metadata)
-    date=info.get('game_date') or info.get('in_game_date')
+    info=metadata.get('info',metadata) if isinstance(metadata,dict) else None
+    date=valid_game_date(info.get('game_date') or info.get('in_game_date')) if isinstance(info,dict) else None
+    if date is None:
+        raise ValueError('Missing or invalid game date; refusing to import without YYYY-MM-DD chronology')
     build=info.get('build')
-    latest=db.execute('SELECT MAX(game_date) FROM snapshots WHERE career=?',(career,)).fetchone()[0]
-    if date and latest and date<latest:
-        log(f'Skipping older rotating save: {date} < {latest}')
-        return (0,0)
-    # First filter by cohort, then compare only this small set with the database.
-    previous=dict(db.execute('SELECT player_key,record_hash FROM player_latest WHERE career=?',(career,)))
-    changes=[]
-    for key,row in rows.items():
-        payload=json.dumps(important(row),ensure_ascii=False,sort_keys=True,separators=(',',':'))
-        digest=hashlib.sha256(payload.encode('utf-8')).hexdigest()
-        if previous.get(key)!=digest:
-            changes.append((key,row,digest,payload))
     with db:
+        # Serialise the chronology check with the writes, including concurrent watchers.
+        db.execute('BEGIN IMMEDIATE')
+        latest=db.execute('SELECT latest_game_date FROM career_chronology WHERE career=?',(career,)).fetchone()
+        if latest and date<latest[0]:
+            log(f'Skipping older rotating save for {career}: {date} < {latest[0]}')
+            return None
+        # First filter by cohort, then compare only this small set with the database.
+        previous=dict(db.execute('SELECT player_key,record_hash FROM player_latest WHERE career=?',(career,)))
+        changes=[]
+        for key,row in rows.items():
+            payload=json.dumps(important(row),ensure_ascii=False,sort_keys=True,separators=(',',':'))
+            digest=hashlib.sha256(payload.encode('utf-8')).hexdigest()
+            if previous.get(key)!=digest:
+                changes.append((key,row,digest,payload))
         if changes:
             c=db.execute('''INSERT INTO snapshots
                (career,source_file,source_sha256,selection_sha256,game_date,game_build,imported_utc,player_count,changed_count)
                VALUES (?,?,?,?,?,?,?,?,?)''',
-               (career,str(source),save_hash,sel_hash,str(date) if date else None,
+                (career,str(source),save_hash,sel_hash,date,
                 str(build) if build else None,datetime.now(timezone.utc).isoformat(),len(rows),len(changes)))
             snapshot_id=c.lastrowid
             db.executemany('''INSERT INTO player_versions
@@ -348,8 +387,11 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
             VALUES (?,?,?,1,?,?) ON CONFLICT(career,player_key,cohort)
             DO UPDATE SET active=1,last_seen_game_date=excluded.last_seen_game_date,
                           source_export=excluded.source_export''',
-            ((career,key,cohort,str(date) if date else None,str(export) if cohort=='target' and export else None)
+            ((career,key,cohort,date,str(export) if cohort=='target' and export else None)
              for key,cohorts in membership.items() for cohort in cohorts))
+        db.execute('''INSERT INTO career_chronology(career,latest_game_date) VALUES (?,?)
+            ON CONFLICT(career) DO UPDATE SET latest_game_date=excluded.latest_game_date''',
+                   (career,date))
     return (len(rows),len(changes))
 
 
@@ -369,8 +411,11 @@ def process(db,source,career,export):
         if candidates:
             fmsave('export',str(copy),'players','--all','-o',str(world_file),'--strict')
         rows,membership,found=choose_rows(squad_file,world_file,candidates)
-        n,k=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export)
-        log(f'Active: {sum("squad" in c for c in membership.values())} squad, '
+        result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export)
+        if result is None:
+            return False
+        n,k=result
+        log(f'Accepted: {sum("squad" in c for c in membership.values())} squad, '
             f'{found}/{len(candidates)} filtered targets; {k} player versions changed; '
             f'database {db.execute("PRAGMA database_list").fetchone()[2]}')
     return True
@@ -482,3 +527,4 @@ def main():
 
 if __name__=='__main__':
     sys.exit(main())
+
