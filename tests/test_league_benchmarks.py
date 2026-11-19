@@ -23,9 +23,10 @@ def competition_fixture(comp="500", db_id="9000", season=2026, members=None):
     competitions = [{"id": comp, "database_id": db_id, "name": ""}]
     tables = [{"competition_id": comp, "rows": [{"club_uid": uid, "team_slot": 0} for uid in members]}]
     fixtures = [{"competition_id": comp, "season_start_year": season,
-                 "date": (date(season, 8, 1) + timedelta(days=index * 24)).isoformat(),
-                 "home_club_uid": "100", "away_club_uid": uid, "home_team_slot": 0, "away_team_slot": 0}
-                for index, uid in enumerate(members[1:])]
+                 "date": (date(season, 8, 1) + timedelta(days=index * 12)).isoformat(),
+                 "home_club_uid": uid if away else "100", "away_club_uid": "100" if away else uid,
+                 "home_team_slot": 0, "away_team_slot": 0, "stage_id": comp, "round": "", "round_code": ""}
+                for index, (away, uid) in enumerate((away, uid) for away in (False, True) for uid in members[1:])]
     return clubs, competitions, tables, fixtures
 
 
@@ -76,7 +77,7 @@ class LeagueBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["season_start_year"], 2027)
         self.assertEqual(detect(old)["competition"]["id"], "501")
         self.assertEqual(result["competition"]["name_source"], "identifier_label")
-        cache = {"version": 1, "status": "available", "model_sha256": "m", "detection": detect(old),
+        cache = {"version": 1, "detection_policy": league.DETECTION_POLICY, "status": "available", "model_sha256": "m", "detection": detect(old),
                  "extraction_game_date": "2027-01-01", "reference": {"status": "available", "invented": True}}
         self.assertIsNone(league.reuse_reference(cache, result, "m", "2027-09-01"))
         self.assertEqual(league.reuse_reference(cache, detect(old), "m", "2027-01-20"), cache["reference"])
@@ -98,6 +99,46 @@ class LeagueBenchmarkTests(unittest.TestCase):
         unresolved = [{"competition_id": None, "rows": first[2][0]["rows"]}]
         self.assertEqual(detect((first[0], first[1], unresolved, first[3]))["status"], "unavailable")
         self.assertEqual(detect(first, "2030-01-01")["status"], "unavailable")
+
+    def test_eight_team_cup_group_never_becomes_the_league(self):
+        clubs, comps, tables, fixtures = competition_fixture(comp="600", members=[str(i) for i in range(100,108)])
+        # Satisfies every old criterion, even with reciprocal season-length fixtures.
+        for fixture in fixtures:
+            fixture.update(round="UNKNOWN", round_code="42")
+        cup = clubs, comps, tables, fixtures
+        self.assertEqual(detect(cup)["reason"], "no_corroborated_current_domestic_league")
+        self.assertEqual(detect(cup, override="600")["status"], "unavailable")
+        # A missing or unresolved league cannot promote that cup to the baseline.
+        genuine = competition_fixture()
+        unresolved = {"competition_id": None, "rows": genuine[2][0]["rows"]}
+        mixed = genuine[0], comps + genuine[1], tables + [unresolved], fixtures + genuine[3]
+        self.assertEqual(detect(mixed)["status"], "unavailable")
+        self.assertEqual(detect(mixed, override="600")["status"], "unavailable")
+        resolved = genuine[0], comps + genuine[1], tables + genuine[2], fixtures + genuine[3]
+        self.assertEqual(detect(resolved)["competition"]["id"], "500")
+        self.assertEqual(detect(resolved, override="500")["method"], "manual_override")
+        unresolved_split = {"competition_id": None, "rows": genuine[2][0]["rows"][:6]}
+        self.assertEqual(detect((resolved[0], resolved[1], resolved[2] + [unresolved_split], resolved[3]))["status"], "unavailable")
+
+    def test_roundless_cup_like_or_missing_metadata_fails_closed(self):
+        clubs, comps, tables, fixtures = competition_fixture(members=[str(i) for i in range(100,108)])
+        self.assertEqual(detect((clubs, comps, tables, fixtures[:7]), "2026-10-01")["status"], "unavailable")
+        short = [dict(f, date=(date(2026,8,1)+timedelta(days=i*3)).isoformat()) for i,f in enumerate(fixtures)]
+        self.assertEqual(detect((clubs, comps, tables, short), "2026-09-01")["status"], "unavailable")
+        fixtures[0].pop("round_code")
+        self.assertEqual(detect((clubs, comps, tables, fixtures))["status"], "unavailable")
+
+    def test_genuine_league_in_another_career(self):
+        clubs, comps, tables, fixtures = competition_fixture(comp="700", db_id="8000")
+        def new_uid(uid):
+            return str(int(uid) + 1000)
+        clubs = [dict(c, uid=new_uid(c["uid"]), nation_id="9") for c in clubs]
+        tables[0]["rows"] = [dict(row, club_uid=new_uid(row["club_uid"])) for row in tables[0]["rows"]]
+        fixtures = [dict(f, home_club_uid=new_uid(f["home_club_uid"]), away_club_uid=new_uid(f["away_club_uid"])) for f in fixtures]
+        result = league.detect_competition("1100", "9", clubs, comps, tables, fixtures, "2027-01-01")
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["competition"]["id"], "700")
+        self.assertEqual(result["competition"]["league_nation_id"], "9")
 
     def test_non_domestic_and_youth_tables_rejected(self):
         clubs, comps, tables, fixtures = competition_fixture()
@@ -163,7 +204,7 @@ class LeagueBenchmarkTests(unittest.TestCase):
         self.assertIsNone(result["profiles"]["CB"]["median"])
         result = aggregate(rows, clubs)
         competition = detect(competition_fixture())
-        cache = {"version": 1, "status": "available", "model_sha256": "model", "observed_game_date": "2027-01-01",
+        cache = {"version": 1, "detection_policy": league.DETECTION_POLICY, "status": "available", "model_sha256": "model", "observed_game_date": "2027-01-01",
                  "detection": competition, "extraction_game_date": "2027-01-01", "reference": result, "provenance": {}}
         people = [{"player_id": "career:1", "raw": rows[0], "scores": {"CB": 12}},
                   {"player_id": "career:2", "raw": dict(rows[0], positions_dc="", positions_sw=""), "scores": {"CB": 12}}]
@@ -175,6 +216,9 @@ class LeagueBenchmarkTests(unittest.TestCase):
         self.assertEqual(cb[1]["reason"], "position_familiarity_not_confirmed")
         stale = league.build_report(cache, people, "career", "2027-01-02", "model", CODES, evidence)
         self.assertEqual(stale["reason"], "benchmark_detection_date_mismatch")
+        cache.pop("detection_policy")
+        self.assertEqual(league.build_report(cache, people, "career", "2027-01-01", "model", CODES, evidence)["reason"], "benchmark_detection_requires_refresh")
+        self.assertIsNone(league.reuse_reference(cache, competition, "model", "2027-01-01"))
 
 
 if __name__ == "__main__":
