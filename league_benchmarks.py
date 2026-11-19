@@ -10,6 +10,8 @@ MIN_CONTRIBUTING_CLUBS = 4
 MIN_ATTRIBUTE_COVERAGE = 0.75
 REFRESH_DAYS = 30
 SEASON_GRACE_DAYS = 31
+MIN_LEAGUE_SPAN_DAYS = 120
+DETECTION_POLICY = 2
 
 
 def identifier(value):
@@ -32,8 +34,8 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
                        *, override=None, names=None, nation_database_id=None, nation_code=None):
     """Join live tables, domestic first teams and dated managed fixtures.
 
-    fmsave does not expose a reliable league/cup discriminator or current
-    season on a live table. Require corroboration and refuse ambiguous cases.
+    fmsave verifies fixture stage/round fields, but has no league/cup flag.
+    Require roundless stages and a season-length reciprocal calendar.
     """
     today = game_date(observed_date)
     if today is None or identifier(nation_id) is None:
@@ -69,7 +71,8 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
                 invalid.add(comp)
             continue
         if comp is None:
-            unresolved |= managed_uid in ids and len(ids) >= MIN_LEAGUE_CLUBS
+            # An unresolved split can contain fewer than eight clubs.
+            unresolved |= managed_uid in ids
             continue
         groups[comp].update(ids)
 
@@ -90,7 +93,12 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
         if not 1 <= int(year) <= 9999 or played.year not in (int(year), int(year) + 1):
             continue
         opponent = away if home == managed_uid else home
-        calendars[(comp, int(year))].append((played, opponent))
+        # CSV exports coded rounds as a label and raw code; an unknown
+        # round still has a code. Missing columns are not evidence of no round.
+        roundless = (identifier(fixture.get("stage_id")) is not None
+                     and "round" in fixture and "round_code" in fixture
+                     and fixture["round"] in (None, "") and fixture["round_code"] in (None, ""))
+        calendars[(comp, int(year))].append((played, opponent, home == managed_uid, roundless))
 
     candidates = []
     for comp, members in sorted(groups.items()):
@@ -101,9 +109,15 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
         for (fixture_comp, season), calendar in sorted(calendars.items()):
             if fixture_comp != comp:
                 continue
-            dates = sorted(d for d, _ in calendar)
-            opponents = {uid for _, uid in calendar}
-            if not opponents <= members - {managed_uid} or len(opponents) < 4:
+            dates = sorted(d for d, _, _, _ in calendar)
+            opponents = {uid for _, uid, _, _ in calendar}
+            # Scottish split tables share a competition, so check the union
+            # against the entire season, not just one split's fixtures.
+            expected = members - {managed_uid}
+            if (opponents != expected or not all(no_round for _, _, _, no_round in calendar)
+                    or {uid for _, uid, home, _ in calendar if home} != expected
+                    or {uid for _, uid, home, _ in calendar if not home} != expected
+                    or (dates[-1] - dates[0]).days < MIN_LEAGUE_SPAN_DAYS):
                 continue
             gap = max((dates[0] - today).days, (today - dates[-1]).days, 0)
             if gap > SEASON_GRACE_DAYS:
@@ -262,7 +276,7 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
 
 def reuse_reference(cache, detection, model_hash, observed_date):
     """Reuse aggregate only within the same competition, season, clubs and model."""
-    if not cache or cache.get("version") != 1 or cache.get("status") != "available" or cache.get("model_sha256") != model_hash:
+    if not cache or cache.get("version") != 1 or cache.get("detection_policy") != DETECTION_POLICY or cache.get("status") != "available" or cache.get("model_sha256") != model_hash:
         return None
     previous = cache["detection"]
     if cache["reference"].get("status") != "available":
@@ -295,6 +309,8 @@ def build_report(cache, people, career, observed_date, model_hash, profile_codes
         report.update(unavailable(cache.get("reason") or "benchmark_model_mismatch"))
     elif cache.get("status") != "available":
         report.update(unavailable(cache["reason"], detection=cache.get("detection")))
+    elif cache.get("detection_policy") != DETECTION_POLICY:
+        report.update(unavailable("benchmark_detection_requires_refresh"))
     else:
         detection = cache["detection"]
         report.update(status="available", reason=None, competition=detection["competition"],
