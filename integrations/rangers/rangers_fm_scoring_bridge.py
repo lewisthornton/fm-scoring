@@ -26,6 +26,7 @@ import sys
 import time
 import tomllib
 import webbrowser
+from rangers_club import loan_state, rangers_ids
 
 DEFAULT_DB = Path(__file__).resolve().parent / "fm_rangers_scoped.sqlite3"
 DEFAULT_SLUG = "rangers-recruitment"
@@ -85,6 +86,10 @@ def get_database(dbpath: Path, career: str):
         con = sqlite3.connect(dbpath.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
         con.row_factory = sqlite3.Row
         with con:
+            con.execute("BEGIN")
+            bound = None
+            if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_club'").fetchone():
+                bound = con.execute("SELECT club_uid FROM career_club WHERE career=?", (career,)).fetchone()
             rows = con.execute("""
                 SELECT m.player_key, m.cohort, p.record_json, m.last_seen_game_date, m.source_export
                   FROM cohort_membership AS m
@@ -117,6 +122,8 @@ def get_database(dbpath: Path, career: str):
             sources.add(Path(row["source_export"]).name)
     # Preserve human-readable names; disambiguate actual duplicate identities instead of merging.
     names = Counter(p["raw"].get("name", "") for p in people.values())
+    legacy_ids = rangers_ids(p["raw"] for p in people.values() if "squad" in p["cohorts"])
+    managed_uid = bound[0] if bound else next(iter(legacy_ids)) if len(legacy_ids) == 1 else None
     for person in people.values():
         raw = person["raw"]
         if not raw.get("name") or as_int(raw.get("age")) is None:
@@ -125,6 +132,7 @@ def get_database(dbpath: Path, career: str):
             person["name"] = f"{raw['name']} [UID {raw.get('unique_id') or raw.get('uid')}]"
         else:
             person["name"] = raw["name"]
+        person["loan_state"], person["availability"] = loan_state(raw, managed_uid) if "squad" in person["cohorts"] else ("unknown", "unknown")
     return list(people.values()), date or datetime.today().date().isoformat(), sorted(sources)
 
 
@@ -275,8 +283,9 @@ def native_rows(records, symbol):
     rows = []
     for p in records:
         r = p["raw"]
-        loan = "out" if r.get("on_loan") == "true" and "squad" in p["cohorts"] else ""
-        rows.append({"Name": p["name"], "Club": p["club"], "Age": p["age"], "Left Foot": fm_foot(r),
+        squad = "squad" in p["cohorts"]
+        loan = {"incoming": "in", "outgoing": "out", "unknown": "unknown"}.get(p.get("loan_state"), "") if squad else ""
+        rows.append({"Name": p["name"], "Club": "Rangers" if squad else p["club"], "Age": p["age"], "Left Foot": fm_foot(r),
                      "Wage": fm_money(p["wage"], symbol) + " p/w" if p["wage"] is not None else "",
                      "Transfer Value": fm_money(p["valuation"], symbol), "Loan": loan,
                      **p["attrs"]})
@@ -359,7 +368,10 @@ def dashboard_data(people, weights, date, source_files, symbol):
     roles = [*weights["outfield"], "GK"]
     result = {}
     for role in roles:
-        group = [p for p in squad if p["scores"].get(role) is not None and (p["fit"].get(role) or 0) >= 15]
+        # Keep the existing score-based comparison against the currently
+        # registered squad, excluding newly included outgoing loanees.
+        group = [p for p in squad if p["availability"] != "unavailable" and
+                 p["scores"].get(role) is not None and (p["fit"].get(role) or 0) >= 15]
         incumbent = max(group, key=lambda p: p["scores"][role], default=None)
         candidates = []
         for t in targets:
@@ -385,7 +397,10 @@ def dashboard_data(people, weights, date, source_files, symbol):
     return {"meta": {"date": date, "squad": len(squad), "targets": len(targets),
                      "source": ", ".join(source_files), "symbol": symbol,
                      "weights": "fm27v2.toml (from fm-scoring)"},
-            "roles": result}
+            "roles": result,
+            "squad_availability": [{"name": p["name"], "key": p["key"], "club": p["club"],
+                                    "loan_state": p["loan_state"], "availability": p["availability"]}
+                                   for p in squad]}
 
 
 HTML = r'''<!doctype html>
@@ -397,6 +412,7 @@ HTML = r'''<!doctype html>
 </style></head><body><div class="wrap">
 <header><div><h1>Rangers <span class="muted">/ Recruitment</span></h1><p class="subtitle">Filtered FM27 candidates matched to your save · <span id="gameDate"></span></p></div><nav class="nav"><a href="squad.html">Rangers squad</a><a href="last.html">Latest targets</a><a href="players.html">All observed</a></nav></header>
 <div class="cards"><div class="card"><div class="muted small">Rangers players</div><div class="num" id="squadCount">—</div></div><div class="card"><div class="muted small">Active filtered targets</div><div class="num" id="targetCount">—</div></div><div class="card"><div class="muted small">Position-qualified</div><div class="num" id="eligibleCount">—</div></div><div class="card"><div class="muted small">Above current best</div><div class="num" id="upgradeCount">—</div></div></div>
+<p class="subtitle" id="availability"></p>
 <div class="control"><label>Position <select id="role"></select></label><label>Sort by <select id="sort"><option value="uplift">Upgrade over Rangers player ↓</option><option value="score">Position score ↓</option><option value="value">Transfer value ↑</option><option value="wage">Weekly wage ↑</option><option value="age">Age ↑</option></select></label><label>Find player <input id="find" type="text" placeholder="Name or club"></label><label class="check"><input id="natural" type="checkbox" checked> Natural / accomplished only (15+)</label><label class="check"><input id="upgrade" type="checkbox"> Only upgrades</label></div>
 <div class="info"><h2>Best familiar Rangers player <span class="muted small" id="roleTitle"></span></h2><div id="incumbent"></div></div>
 <div class="columns"><section class="tablebox"><table><thead><tr><th>Candidate</th><th>Club</th><th class="right">Age</th><th class="right">Role fit</th><th class="right">Score</th><th class="right">Upgrade</th><th class="right">Value*</th><th class="right">Wage/wk*</th></tr></thead><tbody id="candidates"></tbody></table><div id="empty" class="empty" style="display:none">No targets match these filters. Try unchecking natural/accomplished or changing position.</div></section><section class="detail" id="detail"><h2 id="detailTitle"></h2><div class="muted small" id="detailInfo"></div><div id="differences" style="margin-top:14px"></div></section></div>
@@ -411,6 +427,8 @@ function money(n){if(n==null)return '—';let s=D.meta.symbol;if(n>=1e9)return s
 function el(parent,tag,text,cls){const x=document.createElement(tag);if(text!=null)x.textContent=text;if(cls)x.className=cls;parent.appendChild(x);return x;}
 function init(){const roles=Object.keys(D.roles);for(const role of roles){const o=el($('role'),'option',D.roles[role].label+' ('+role+')');o.value=role;}
 $('role').value=D.roles['CB']?'CB':roles[0];$('squadCount').textContent=D.meta.squad;$('targetCount').textContent=D.meta.targets;$('gameDate').textContent=D.meta.date;$('source').textContent='Weight model: '+D.meta.weights+' · Target source: '+(D.meta.source||'not supplied');
+const countAvailability=state=>D.squad_availability.filter(p=>p.availability===state).length;
+$('availability').textContent='Club-level selection: '+countAvailability('available')+' available · '+countAvailability('unavailable')+' away on loan · '+countAvailability('unknown')+' unknown. Injury, suspension and registration eligibility are unverified.';
 try{const v=JSON.parse(localStorage.getItem('fm:rangers:recruitment')||'{}');for(const k of ['role','sort','find'])if(v[k]!=null)$(k).value=v[k];for(const k of ['natural','upgrade'])if(v[k]!=null)$(k).checked=v[k];}catch(e){}
 for(const id of ['role','sort','find','natural','upgrade'])$(id).addEventListener(id==='find'?'input':'change',()=>{try{localStorage.setItem('fm:rangers:recruitment',JSON.stringify(Object.fromEntries(['role','sort','find','natural','upgrade'].map(k=>[k,['natural','upgrade'].includes(k)?$(k).checked:$(k).value]))));}catch(e){}render();});render();}
 function render(){const role=$('role').value,section=D.roles[role];$('roleTitle').textContent='('+role+')';const base=section.incumbent;$('incumbent').textContent=base?base.name+' · '+fmt(base.score)+' position score · '+(base.fit>=18?'Natural':base.fit>=15?'Accomplished':'Unfamiliar'):'No Rangers player with confirmed natural/accomplished familiarity; upgrades cannot be determined.';
@@ -525,3 +543,4 @@ if __name__ == "__main__":
     except (RuntimeError, sqlite3.Error, OSError, ValueError) as e:
         log("ERROR: " + str(e))
         raise SystemExit(1)
+
