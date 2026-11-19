@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from rangers_club import club_uid, rangers_names, rangers_ids
@@ -98,6 +99,10 @@ CREATE TABLE IF NOT EXISTS career_club (
     career TEXT PRIMARY KEY,
     club_uid TEXT NOT NULL,
     manager_staff_uid TEXT
+);
+CREATE TABLE IF NOT EXISTS career_benchmark (
+    career TEXT PRIMARY KEY,
+    aggregate_json TEXT NOT NULL
 );
 '''
 
@@ -390,7 +395,7 @@ def confirm_career_club(db,career,managed):
         raise ValueError('Cannot reconcile existing career club identifiers with managed Rangers club')
 
 
-def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membership,export,managed):
+def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membership,export,managed,benchmark=None):
     info=metadata.get('info',metadata) if isinstance(metadata,dict) else None
     date=valid_game_date(info.get('game_date') or info.get('in_game_date')) if isinstance(info,dict) else None
     if date is None:
@@ -445,10 +450,111 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
         db.execute('''INSERT INTO career_club(career,club_uid,manager_staff_uid) VALUES (?,?,?)
             ON CONFLICT(career) DO UPDATE SET manager_staff_uid=COALESCE(career_club.manager_staff_uid,excluded.manager_staff_uid)''',
                    (career,*managed))
+        if benchmark is not None:
+            db.execute('''INSERT INTO career_benchmark(career,aggregate_json) VALUES (?,?)
+                ON CONFLICT(career) DO UPDATE SET aggregate_json=excluded.aggregate_json''',
+                       (career,json.dumps(benchmark,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)))
     return (len(rows),len(changes))
 
 
-def process(db,source,career,export):
+def capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,save_hash,
+                      *, root=None, override=None, names_file=None):
+    """Reuse the already extracted temporary world CSV; persist aggregates only."""
+    info = metadata.get('info',metadata) if isinstance(metadata,dict) else {}
+    if not isinstance(info,dict):
+        info = {}
+    observed_date = valid_game_date(info.get('game_date') or info.get('in_game_date'))
+    provenance = {"save_sha256": save_hash, "game_build": info.get("build"),
+                  "fmsave_version": info.get("fmsave_version"), "manual_override": override,
+                  "name_map": None, "name_map_sha256": None}
+    base = {"version": 1, "observed_game_date": observed_date, "model_sha256": None, "provenance": provenance}
+    _, club_rows = read_csv(club_file)
+    nation = club_uid(club_rows[0].get("nation_id"))
+    if nation is None:
+        return {**base, "status": "unavailable", "reason": "managed_league_nation_missing"}
+    try:
+        # The existing standalone bridge already resolves the selected checkout
+        # and owns the established attribute normalization and profile mapping.
+        from rangers_fm_scoring_bridge import find_root, load_checkout_module, load_weighted, attributes, POSITION_CODES
+        checkout = find_root(root)
+        module = load_checkout_module(checkout, "league_benchmarks.py", "League benchmark")
+        base["detection_policy"] = module.DETECTION_POLICY
+        evidence_module = load_checkout_module(checkout, "tactical_assessment.py", "Tactical assessment")
+        formation_module = load_checkout_module(checkout, "formation.py", "Tactical formation")
+        model_bytes = (checkout / "weights" / "fm27v2.toml").read_bytes()
+        model = tomllib.loads(model_bytes.decode("utf-8"))
+        model_hash = hashlib.sha256(model_bytes).hexdigest()
+        base["model_sha256"] = model_hash
+        names = {}
+        if names_file is not None:
+            names_file = names_file.expanduser().resolve()
+            fields, rows = read_csv(names_file)
+            if not {"database_id", "name"} <= set(fields):
+                raise ValueError("Benchmark names require database_id,name columns")
+            for row in rows:
+                key = module.identifier(row["database_id"])
+                name = (row["name"] or "").strip()
+                if key is None or not name or key in names:
+                    raise ValueError("Invalid or duplicate benchmark competition name mapping")
+                names[key] = name
+            provenance["name_map"] = names_file.name
+            provenance["name_map_sha256"] = sha_file(names_file)
+        cached_row = db.execute('SELECT aggregate_json FROM career_benchmark WHERE career=?',(career,)).fetchone()
+        cached = json.loads(cached_row[0]) if cached_row else None
+        if (cached and cached.get("version") == 1 and cached.get("detection_policy") == module.DETECTION_POLICY and cached.get("status") == "available" and cached.get("model_sha256") == model_hash
+                and cached.get("observed_game_date") == observed_date
+                and all(cached.get("provenance", {}).get(key) == value for key,value in provenance.items())):
+            return cached
+        clubs_file, competitions_file = temp/"league-clubs.csv", temp/"competitions.csv"
+        tables_file, fixtures_file = temp/"league-tables.json", temp/"managed-fixtures.csv"
+        nation_file = temp/"league-nation.csv"
+        fmsave('export',str(copy),'clubs','--nation',nation,'-o',str(clubs_file),'--strict')
+        fmsave('export',str(copy),'nations','--nation',nation,'-o',str(nation_file),'--strict')
+        fmsave('export',str(copy),'competitions','--all','-o',str(competitions_file),'--strict')
+        fmsave('export',str(copy),'league-tables','--nation',nation,'--format','json','-o',str(tables_file),'--strict')
+        fmsave('export',str(copy),'fixtures','--managed-club','--columns',
+               'competition_id,date,season_start_year,home_club_uid,away_club_uid,home_team_slot,away_team_slot,stage_id,round,round_code',
+               '-o',str(fixtures_file),'--strict')
+        nation_rows = [row for row in read_csv(nation_file)[1] if module.identifier(row.get("nation_id")) == nation]
+        nation_database_id = module.identifier(nation_rows[0].get("database_id")) if len(nation_rows) == 1 else None
+        divisions = checkout / "leagues" / "divisions.toml"
+        nation_code = (tomllib.loads(divisions.read_text(encoding="utf-8")).get("nations", {}).get(nation_database_id)
+                       if divisions.is_file() else None)
+        detection = module.detect_competition(
+            managed[0], nation, read_csv(clubs_file)[1], read_csv(competitions_file)[1],
+            json.loads(tables_file.read_text(encoding="utf-8")), read_csv(fixtures_file)[1],
+            observed_date, override=override, names=names,
+            nation_database_id=nation_database_id, nation_code=nation_code)
+        if detection["status"] != "available":
+            return {**base, "status": "unavailable", "reason": detection["reason"], "detection": detection}
+        reference = module.reuse_reference(cached, detection, model_hash, observed_date)
+        if reference is not None and (cached["provenance"].get("reference_game_build") != info.get("build") or
+                                      cached["provenance"].get("reference_fmsave_version") != info.get("fmsave_version")):
+            reference = None
+        if reference is not None:
+            extraction_date = cached["extraction_game_date"]
+            provenance["reference_save_sha256"] = cached["provenance"]["reference_save_sha256"]
+            provenance["reference_game_build"] = cached["provenance"].get("reference_game_build")
+            provenance["reference_fmsave_version"] = cached["provenance"].get("reference_fmsave_version")
+        else:
+            canonical = {name.casefold():name for profile in [model["gk"],*model["outfield"].values()] for name in profile}
+            with world_file.open("r",encoding="utf-8-sig",newline="") as stream:
+                reference = module.aggregate_reference(
+                    csv.DictReader(stream), detection["club_uids"], model, POSITION_CODES,
+                    evidence_for=lambda row: evidence_module.position_evidence(row,formation_module.FM_POSITION_CODES),
+                    attrs_for=lambda row: attributes(row,canonical), scorer=load_weighted(checkout))
+            extraction_date = observed_date
+            provenance["reference_save_sha256"] = save_hash
+            provenance["reference_game_build"] = info.get("build")
+            provenance["reference_fmsave_version"] = info.get("fmsave_version")
+        return {**base, "status": "available", "reason": None, "detection": detection,
+                "extraction_game_date": extraction_date, "reference": reference}
+    except (OSError, RuntimeError, ValueError, ImportError, KeyError, TypeError, AttributeError) as exc:
+        log(f'League benchmark unavailable: {exc}')
+        return {**base, "status": "unavailable", "reason": "benchmark_source_unavailable"}
+
+
+def process(db,source,career,export,*,benchmark_root=None,benchmark_competition=None,benchmark_names=None):
     log('Processing '+source.name+(f'; filter {export.name}' if export else '; squad only'))
     with tempfile.TemporaryDirectory(prefix='fm-rangers-') as td:
         temp=Path(td)
@@ -473,7 +579,9 @@ def process(db,source,career,export):
         log(f'Temporary full-world player export completed in {time.monotonic()-export_started:.2f}s; '
             f'{world_file.stat().st_size/1024**2:.2f} MiB (temporary)')
         rows,membership,found=choose_rows(world_file,candidates,managed[0])
-        result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export,managed)
+        benchmark=capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,save_hash,
+                                   root=benchmark_root,override=benchmark_competition,names_file=benchmark_names)
+        result=import_selection(db,career,source,save_hash,selection_hash,metadata,rows,membership,export,managed,benchmark)
         if result is None:
             return False
         n,k=result
@@ -492,6 +600,9 @@ def list_saves(args):
 
 def run(args):
     db=connect(args.db)
+    benchmark_options = {"benchmark_root": getattr(args,"fm_scoring_root",None),
+                         "benchmark_competition": getattr(args,"benchmark_competition",None),
+                         "benchmark_names": getattr(args,"benchmark_names",None)}
     try:
         log('Watching Rangers saves (read-only). A filtered F9 export updates the target cohort.')
         if args.exports_dir and not find_export(args.exports_dir,args.export_pattern):
@@ -504,7 +615,7 @@ def run(args):
                 time.sleep(3)
                 if signature(source)!=stamp or (str(find_export(args.exports_dir,args.export_pattern)) if find_export(args.exports_dir,args.export_pattern) else None)!=(str(exp) if exp else None) or (exp and signature(exp)!=e_stamp[1]):
                     raise RuntimeError('Save or export still being written; retry --once later')
-                process(db,source,args.career,exp)
+                process(db,source,args.career,exp,**benchmark_options)
             return 0
         observed={};processed={}
         while True:
@@ -521,7 +632,7 @@ def run(args):
                     if now-prior[1]<args.stable_seconds or processed.get(source)==sig:
                         continue
                     try:
-                        process(db,source,args.career,exp)
+                        process(db,source,args.career,exp,**benchmark_options)
                         processed[source]=sig
                     except (OSError,RuntimeError,ValueError,sqlite3.Error,subprocess.SubprocessError) as e:
                         log('Import error; will retry: '+str(e))
@@ -562,6 +673,9 @@ def main():
     g.add_argument('--watch-dir',type=Path,help='Watch a folder of rotating saves')
     p.add_argument('--pattern',default='*Rangers*.fm',help='Autosave filename glob with --watch-dir')
     p.add_argument('--career',default='rangers')
+    p.add_argument('--fm-scoring-root',type=Path,help='Selected checkout for league benchmark scoring (auto-detected by default)')
+    p.add_argument('--benchmark-competition',help='Explicit save-local competition ID; must be supported by current evidence')
+    p.add_argument('--benchmark-names',type=Path,help='Optional CSV database_id,name map for competition display names')
     p.add_argument('--db',type=Path,default=DEFAULT_DB)
     p.add_argument('--exports-dir',type=Path,help='FM View Exporter CSV output folder (optional; squad only if absent)')
     p.add_argument('--export-pattern',default='rangers*player-database*.csv',help='Glob for the filtered Rangers F9 exports')

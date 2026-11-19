@@ -180,3 +180,7 @@ and deterministic identity-aware output. Integration tests verify scoped
 membership and loan availability, model/formation provenance, unchanged-record
 dates, no unrelated player leakage, default/custom formation parity and
 standalone launcher compatibility. The 57 previous tests remain passing.
+
+## League benchmarks
+
+See [the benchmark contract](../formations/BENCHMARKS.md). Invented fixtures cover competition/season detection, conservative overrides, empirical quantiles/ties, positional evidence, quality gates, career scoping, temporary world reuse, aggregate-only persistence, deterministic output and standalone bridge compatibility. Existing parity tests remain unchanged.

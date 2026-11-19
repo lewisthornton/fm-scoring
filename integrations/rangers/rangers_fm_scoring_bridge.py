@@ -104,7 +104,7 @@ def formation_path(root, explicit):
     return explicit.expanduser().resolve() if explicit is not None else root / "formations" / "default.toml"
 
 
-def get_database(dbpath: Path, career: str):
+def get_database(dbpath: Path, career: str, *, with_benchmark=False):
     """Consistent SQLite snapshot; does not create or modify an absent DB."""
     if not dbpath.is_file():
         raise RuntimeError(f"Scoped watcher database does not exist: {dbpath}")
@@ -114,6 +114,7 @@ def get_database(dbpath: Path, career: str):
         with con:
             con.execute("BEGIN")
             bound = None
+            benchmark = None
             if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_club'").fetchone():
                 bound = con.execute("SELECT club_uid FROM career_club WHERE career=?", (career,)).fetchone()
             rows = con.execute("""
@@ -127,6 +128,13 @@ def get_database(dbpath: Path, career: str):
                   JOIN snapshots AS s ON s.id=p.snapshot_id
                  WHERE m.career=? AND m.active=1
             """, (career,)).fetchall()
+            if with_benchmark and con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_benchmark'").fetchone():
+                cached = con.execute("SELECT aggregate_json FROM career_benchmark WHERE career=?", (career,)).fetchone()
+                if cached:
+                    try:
+                        benchmark = json.loads(cached[0])
+                    except ValueError:
+                        benchmark = None
         con.close()
     except sqlite3.Error as exc:
         raise RuntimeError(f"Can't read expected scoped database tables in {dbpath}: {exc}") from exc
@@ -167,7 +175,8 @@ def get_database(dbpath: Path, career: str):
         else:
             person["name"] = raw["name"]
         person["loan_state"], person["availability"] = loan_state(raw, managed_uid) if "squad" in person["cohorts"] else ("unknown", "unknown")
-    return list(people.values()), date or datetime.today().date().isoformat(), sorted(sources)
+    result = (list(people.values()), date or datetime.today().date().isoformat(), sorted(sources))
+    return (*result, benchmark) if with_benchmark else result
 
 
 def as_int(x):
@@ -502,13 +511,17 @@ def sync_once(args, root):
     formation_module = load_checkout_module(root, "formation.py", "Tactical formation")
     selected_formation = formation_path(root, getattr(args, "formation", None))
     formation = formation_module.load_formation(selected_formation, weights)
-    people, date, sources = get_database(path, args.career)
+    people, date, sources, benchmark_cache = get_database(path, args.career, with_benchmark=True)
     scorer = load_weighted(root)
     scored_people(people, weights, scorer=scorer)
-    assessment = load_checkout_module(root, "tactical_assessment.py", "Tactical assessment").build_assessments(
+    tactical_module = load_checkout_module(root, "tactical_assessment.py", "Tactical assessment")
+    assessment = tactical_module.build_assessments(
         formation, weights, people, codes=formation_module.FM_POSITION_CODES, scorer=scorer,
         career=args.career, formation_source=selected_formation.name,
         model_sha256=hashlib.sha256(model_bytes).hexdigest())
+    benchmark = load_checkout_module(root, "league_benchmarks.py", "League benchmark").build_report(
+        benchmark_cache, people, args.career, assessment["game_date"], assessment["scoring_model"]["sha256"],
+        POSITION_CODES, lambda raw: tactical_module.position_evidence(raw, formation_module.FM_POSITION_CODES))
     keeper_squad = [p for p in people if p["keeper"] and "squad" in p["cohorts"]]
     keeper_targets = [p for p in people if p["keeper"] and "target" in p["cohorts"] and "squad" not in p["cohorts"]]
     unscored_keepers = [p["name"] for p in [*keeper_squad, *keeper_targets]
@@ -534,10 +547,12 @@ def sync_once(args, root):
         raise RuntimeError("Dashboard created, but fm-scoring's score.py failed: " + (proc.stderr or proc.stdout)[-1800:])
     write_atomic(outdir / "formation.json", json.dumps(formation, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     write_atomic(outdir / "tactical_assessments.json", json.dumps(assessment, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+    write_atomic(outdir / "league_benchmarks.json", json.dumps(benchmark, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     log(f"Rangers {squad_total} · active targets {target_total} · exported scored rows {exported_rows} · date {date}")
     log(f"Dashboard: {outdir / 'recruitment.html'}")
     log(f"Formation: {formation['name']} · {outdir / 'formation.json'}")
     log(f"Tactical assessments: {outdir / 'tactical_assessments.json'}")
+    log(f"League benchmarks: {outdir / 'league_benchmarks.json'} ({benchmark['status']})")
     if args.open:
         webbrowser.open((outdir / "recruitment.html").resolve().as_uri())
     return outdir / "recruitment.html"
