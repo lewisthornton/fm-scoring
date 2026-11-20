@@ -23,11 +23,11 @@ def totals(xi):
             "goalkeeper_total": xi["goalkeeper_total"]}
 
 
-def league_context(benchmark, context, reason, key, profile):
-    item = context.get((key, profile))
+def league_context(benchmark, context, reason, key, profile, native_position=None):
+    item = context.get((key, profile, native_position) if native_position else (key, profile))
     if item is None:
-        return {"comparison": None, "reason": reason or "no_matching_profile_comparison"}
-    distribution = (benchmark.get("reference") or {}).get("profiles", {}).get(profile, {})
+        return {"comparison": None, "reason": reason or ("no_matching_native_position_comparison" if native_position else "no_matching_profile_comparison")}
+    distribution = (benchmark.get("reference") or {}).get("native_profiles" if native_position else "profiles", {}).get(f"{profile}:{native_position}" if native_position else profile, {})
     return {"comparison": {**item, "competition": benchmark["competition"],
                             "extraction_game_date": benchmark["extraction_game_date"],
                             "contributing_clubs": distribution.get("contributing_clubs")}, "reason": item["reason"]}
@@ -79,7 +79,7 @@ def build_squad_depth(formation, assessment, benchmark=None, *, optimizer, polic
                              "loan_state": p["loan_state"], "baseline_slot": starter_slots.get(key),
                              "eligibility_position": optimizer.qualifying_position(slot, evidence, policy),
                              "attribute_profile_score": evidence["attribute_profile_score"],
-                             "assessment": evidence, "league": league_context(benchmark, context, context_reason, key, slot["profile"])})
+                             "assessment": evidence, "league": league_context(benchmark, context, context_reason, key, slot["profile"], slot["selection_position"])})
         eligible.sort(key=lambda e: (-e["attribute_profile_score"], e["player_id"]))
         bench = [e["player_id"] for e in eligible if e["player_id"] not in starter_slots]
         coverage.append({"slot_id": sid, "label": slot["label"], "profile": slot["profile"],

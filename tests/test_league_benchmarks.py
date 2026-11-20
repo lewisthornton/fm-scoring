@@ -51,6 +51,30 @@ def aggregate(rows, clubs):
 
 
 class LeagueBenchmarkTests(unittest.TestCase):
+    def test_native_mc_and_amc_reference_populations_are_separate(self):
+        clubs = ["100", "101", "102", "103"]
+        rows = []
+        for i in range(40):
+            p = reference_player(i+1, clubs[i % 4], 10 if i < 20 else 18)
+            p.update(positions_mc=20 if i < 20 else 1, positions_amc=1 if i < 20 else 20)
+            rows.append(p)
+        reference = aggregate(rows, clubs)
+        self.assertEqual(reference["native_profiles"]["10:mc"]["median"], 10)
+        self.assertEqual(reference["native_profiles"]["10:amc"]["median"], 18)
+        self.assertEqual(reference["profiles"]["10"]["median"], 14)
+        self.assertEqual(reference["native_profiles"]["10:mc"]["sample_size"], 20)
+        cache = {"version": 1, "detection_policy": league.DETECTION_POLICY, "status": "available", "model_sha256": "model", "observed_game_date": "2027-01-01",
+                 "detection": detect(competition_fixture()), "extraction_game_date": "2027-01-01", "reference": reference, "provenance": {}}
+        report = league.build_report(cache, [{"player_id": "invented", "raw": rows[0], "scores": {"10": 10}}], "career", "2027-01-01", "model", CODES, evidence)
+        mc = next(c for c in report["native_comparisons"] if c["profile"] == "10" and c["native_position"] == "mc")
+        amc = next(c for c in report["native_comparisons"] if c["profile"] == "10" and c["native_position"] == "amc")
+        self.assertEqual(mc["percentile"], 50)
+        self.assertIsNone(amc["percentile"])
+        self.assertEqual(amc["reason"], "position_familiarity_not_confirmed")
+        sparse = aggregate(rows[1:], clubs)
+        self.assertEqual(sparse["native_profiles"]["10:mc"]["status"], "unavailable")
+        self.assertIsNone(sparse["native_profiles"]["10:mc"]["median"])
+        self.assertEqual(sparse["profiles"]["10"]["status"], "available")
     def test_preseason_33_roundless_reciprocal_fixtures_without_tables(self):
         clubs, comps, _, fixtures = competition_fixture(comp="33")
         # 11 opponents, three meetings each, 16 home and 17 away.

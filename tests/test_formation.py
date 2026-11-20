@@ -64,6 +64,10 @@ class FormationTests(unittest.TestCase):
         slot["selection_position"] = "ml"
         with self.assertRaisesRegex(ValueError, "selection_position"):
             formation.validate_formation(self.config, PROFILES)
+        slot["selection_position"] = "mr"
+        slot["profile"] = "CB"
+        with self.assertRaisesRegex(ValueError, "profile mapping"):
+            formation.validate_formation(self.config, PROFILES)
 
     def test_custom_labels_phase_side_and_optional_responsibilities(self):
         self.config["slots"][1]["label"] = "My unusual flank"
