@@ -48,6 +48,12 @@ class SigningTests(unittest.TestCase):
         self.assertFalse(depth_only["xi"]["enters_xi"])
         cover = next(r for r in depth_only["depth"]["coverage_changes"] if r["slot_id"] == "lcm")
         self.assertNotIn("defensive-midfielder", cover["after_direct_ids"])
+        relaxed = candidate(build(squad + [right], policy={"mode": "relaxed"}), "wide-midfielder")
+        self.assertEqual(relaxed["xi"]["selected_slot_id"], "rw")
+        self.assertEqual(relaxed["classification"], "starting_upgrade")
+        gated = candidate(build(squad + [right], policy={"mode": "relaxed", "phase_eligibility": "require_weighted_phases"}), "wide-midfielder")
+        self.assertFalse(gated["xi"]["enters_xi"])
+        self.assertNotIn("rw", gated["eligible_slot_ids"])
     def test_starting_upgrade_and_separate_keeper_domain(self):
         people = eleven(DEFAULT) + [target("new-lb", ["dl"], score=18), target("new-gk", ["gk"], score=17, keeper=True)]
         report = build(people)
