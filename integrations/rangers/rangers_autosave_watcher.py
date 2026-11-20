@@ -580,7 +580,11 @@ def capture_benchmark(db,career,copy,temp,world_file,club_file,managed,metadata,
             observed_date, override=override, names=names,
             nation_database_id=nation_database_id, nation_code=nation_code)
         if detection["status"] != "available":
+            reasons = [f'{d["id"]}/{d["season_start_year"]}: {", ".join(d["reasons"]) or "eligible"}' for d in detection.get("diagnostics", [])]
+            log(f'League benchmark unavailable: {detection["reason"]}' + (f' ({"; ".join(reasons)})' if reasons else ""))
             return {**base, "status": "unavailable", "reason": detection["reason"], "detection": detection}
+        log(f'League benchmark competition {detection["competition"]["id"]}: {detection["evidence"]["detection_method"]}, '
+            f'{len(detection["club_uids"])} clubs, {detection["evidence"]["fixture_count"]} fixtures, tables {detection["evidence"]["table_status"]}')
         reference = module.reuse_reference(cached, detection, model_hash, observed_date)
         if reference is not None and (cached["provenance"].get("reference_game_build") != info.get("build") or
                                       cached["provenance"].get("reference_fmsave_version") != info.get("fmsave_version")):
