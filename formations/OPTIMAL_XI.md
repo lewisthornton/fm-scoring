@@ -7,12 +7,12 @@ The bridge publishes `optimal_xi.json` and `optimal_xi.html` alongside the exist
 Default policy (version 2):
 
 ```json
-{"version": 2, "minimum_familiarity": 15, "allow_category_evidence": true, "allow_unknown_availability": false}
+{"version": 2, "minimum_familiarity": 15, "allow_category_evidence": true, "allow_unknown_availability": false, "mode": "strict", "phase_eligibility": "context_only"}
 ```
 
 Optional `--xi-policy path/to/policy.json` on the bridge overrides these settings. A partial object uses defaults; unknown fields or invalid values are rejected. Version 1 settings are accepted and upgraded to strict version 2 semantics. Watch mode also monitors the policy file. No persistent player-data migration is required. A player must be in the active squad (overlap with target is fine), available, in the correct GK/outfield domain, have a complete weighted profile score and confirmed familiarity at the slot's single `selection_position` (observed rating or category lower bound meeting the minimum). The other accepted positions do not qualify the player for that slot. Category evidence is never converted to a point rating. Target-only and unavailable players cannot be enabled by policy; unknown availability is excluded unless explicitly enabled and then flagged. Availability describes squad/loan status, not injury, suspension, fitness or registration eligibility.
 
-IP and OOP positions are not eligibility gates. Their independent evidence and the combined positional fit are carried unchanged; low or unknown phase familiarity is flagged. Observed FM role suitability stays null. No new attributes, weighting or recruitment ranking is introduced.
+`mode=strict` requires the selection position; explicit `mode=relaxed` permits another listed accepted position meeting the same threshold, preferring the selection position when possible and otherwise the first qualifying alternative. The chosen evidence code is `eligibility_position`, and a relaxed alternative is flagged. Legacy v1 settings default to strict, not relaxed. Independently, `phase_eligibility=context_only` is the default: a full-back tucking inside during possession does not necessarily need the native DC familiarity of a starting centre-back; FM familiarity is not a measured tactical-role transition ability. `require_weighted_phases` is an opt-in conservative screen: each positively weighted phase must have confirmed familiarity under the same threshold/category settings; unspecified, missing or below-threshold evidence rejects the edge. Zero-weight phases are ignored by the gate. This applies in either mode, without claiming calibrated suitability. All XI, depth and signing scenarios share the predicate and effective policy. Observed FM role suitability stays null. No new attributes, weighting or recruitment ranking is introduced.
 
 ## Exact objective and solver
 
