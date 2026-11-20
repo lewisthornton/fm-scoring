@@ -7,7 +7,7 @@ import math
 
 
 DEFAULT_POLICY = {"version": 2, "minimum_familiarity": 15, "allow_category_evidence": True,
-                  "allow_unknown_availability": False}
+                  "allow_unknown_availability": False, "mode": "strict", "phase_eligibility": "context_only"}
 
 
 def eligibility_policy(settings=None):
@@ -22,6 +22,8 @@ def eligibility_policy(settings=None):
         raise ValueError("XI minimum familiarity must be an integer from 1 to 20")
     if any(type(policy[k]) is not bool for k in ("allow_category_evidence", "allow_unknown_availability")):
         raise ValueError("XI policy switches must be booleans")
+    if policy["mode"] not in ("strict", "relaxed") or policy["phase_eligibility"] not in ("context_only", "require_weighted_phases"):
+        raise ValueError("Invalid XI selection mode or phase eligibility rule")
     return policy
 
 
@@ -77,7 +79,13 @@ def confirmed(evidence, policy):
             and evidence["lower_bound"] >= policy["minimum_familiarity"])
 
 
-def exclusion_reasons(player, slot, evidence, policy):
+def qualifying_position(slot, evidence, policy):
+    position = slot.get("selection_position", slot["positions"][0])
+    codes = [position] if policy["mode"] == "strict" else [position] + [c for c in slot["positions"] if c != position]
+    return next((code for code in codes if confirmed(evidence["accepted_positions"].get(code), policy)), None)
+
+
+def exclusion_reasons(player, slot, evidence, policy, *, phase_weights=None):
     reasons = []
     if "squad" not in player["cohorts"]:
         reasons.append("not_active_squad")
@@ -92,9 +100,14 @@ def exclusion_reasons(player, slot, evidence, policy):
     score = evidence["attribute_profile_score"]
     if type(score) not in (int, float) or not math.isfinite(score) or evidence["attribute_profile_reason"] is not None:
         reasons.append("incomplete_attribute_profile")
-    position = slot.get("selection_position", slot["positions"][0])
-    if not confirmed(evidence["accepted_positions"].get(position), policy):
-        reasons.append("selection_position_familiarity_not_confirmed")
+    if qualifying_position(slot, evidence, policy) is None:
+        reasons.append("selection_position_familiarity_not_confirmed" if policy["mode"] == "strict" else "accepted_position_familiarity_not_confirmed")
+    if policy["phase_eligibility"] == "require_weighted_phases":
+        if phase_weights is None:
+            raise ValueError("Strict phase eligibility requires formation phase weights")
+        for phase in ("ip", "oop"):
+            if phase_weights[phase] > 0 and not confirmed(evidence[phase]["familiarity"], policy):
+                reasons.append(phase + "_phase_familiarity_not_confirmed")
     return reasons
 
 
@@ -110,7 +123,7 @@ def benchmark_context(benchmark, assessment):
         return {}, "benchmark_date_missing"
     if not 0 <= age < 30:
         return {}, "benchmark_reference_stale"
-    return {(item["player_id"], item["profile"]): item for item in benchmark["comparisons"]}, None
+    return {(item["player_id"], item["profile"]): {**item, "reference_population": "profile_group"} for item in benchmark["comparisons"]}, None
 
 
 def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excluded_player_ids=()):
@@ -137,7 +150,7 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
         for slot in slots:
             sid = slot["id"]
             item = evidence.get((key, sid))
-            reasons = exclusion_reasons(p, slot, item, policy)
+            reasons = exclusion_reasons(p, slot, item, policy, phase_weights=formation["phase_weights"])
             if reasons:
                 rejected[sid] = reasons
             else:
@@ -158,7 +171,7 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
         sid = slot["id"]
         key = chosen[sid]
         row = {"slot_id": sid, "label": slot["label"], "side": slot["side"], "profile": slot["profile"],
-               "selection_position": slot.get("selection_position", slot["positions"][0]),
+               "selection_position": slot.get("selection_position", slot["positions"][0]), "eligibility_position": None,
                "player_id": key, "display_name": None, "attribute_profile_score": None, "assessment": None,
                "warnings": [], "league_benchmark": None, "league_benchmark_reason": context_reason, "vacancy_reason": None}
         if key is None:
@@ -168,6 +181,9 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
             p, item = by_id[key], evidence[key, sid]
             row.update(display_name=p["display_name"], attribute_profile_score=edges[key][sid], assessment=item,
                        availability=p["availability"], loan_state=p["loan_state"])
+            row["eligibility_position"] = qualifying_position(slot, item, policy)
+            if row["eligibility_position"] != row["selection_position"]:
+                row["warnings"].append("relaxed_alternative_position_eligibility")
             for phase in ("ip", "oop"):
                 fit = item[phase]["familiarity"]
                 if not confirmed(fit, policy):
