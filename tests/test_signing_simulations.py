@@ -23,6 +23,31 @@ def candidate(report, key):
 
 
 class SigningTests(unittest.TestCase):
+    def test_audit_examples_require_actual_selection_position(self):
+        # Invented players reproducing only the two reported familiarity patterns.
+        right = target("wide-midfielder", ["mr"], score=20)
+        right["raw"].update(positions_amr=12, positions_mr=18)
+        pivot = target("defensive-midfielder", ["dm"], score=18)
+        pivot["raw"].update(positions_mc=8, positions_dm=16)
+        squad = eleven(DEFAULT)
+        result = build(squad + [right, pivot])
+        wide, dm = candidate(result, "wide-midfielder"), candidate(result, "defensive-midfielder")
+        self.assertNotIn("rw", wide["eligible_slot_ids"])
+        self.assertEqual(wide["classification"], "no_demonstrated_improvement")
+        self.assertFalse(wide["xi"]["enters_xi"])
+        self.assertEqual(wide["xi"]["impact"]["outfield_score_gain"], 0)
+        self.assertEqual(dm["eligible_slot_ids"], ["dm"])
+        self.assertEqual(dm["xi"]["selected_slot_id"], "dm")
+        self.assertEqual(dm["xi"]["impact"]["newly_benched_player_ids"], ["dm"])
+        self.assertNotIn("lcm", [c["slot_id"] for c in dm["xi"]["impact"]["changes"]])
+        self.assertEqual(dm["classification"], "starting_upgrade")
+        self.assertEqual(result["eligibility_policy"]["version"], 2)
+        strong_squad = [p if p["player_id"] != "dm" else person("dm", ["dm"], score=20) for p in squad]
+        depth_only = candidate(build(strong_squad + [pivot]), "defensive-midfielder")
+        self.assertEqual(depth_only["classification"], "depth_improvement")
+        self.assertFalse(depth_only["xi"]["enters_xi"])
+        cover = next(r for r in depth_only["depth"]["coverage_changes"] if r["slot_id"] == "lcm")
+        self.assertNotIn("defensive-midfielder", cover["after_direct_ids"])
     def test_starting_upgrade_and_separate_keeper_domain(self):
         people = eleven(DEFAULT) + [target("new-lb", ["dl"], score=18), target("new-gk", ["gk"], score=17, keeper=True)]
         report = build(people)
@@ -124,6 +149,8 @@ class SigningTests(unittest.TestCase):
         report = build(people, depth_limit=2)
         self.assertEqual(len(report["candidates"]), 30)
         self.assertEqual(report["depth_evaluated_count"], 2)
+        self.assertEqual(report["evaluation_coverage"]["xi_evaluated_count"], 30)
+        self.assertEqual(report["evaluation_coverage"]["depth_status_counts"], {"evaluated": 2, "not_evaluated_limit": 28})
         self.assertEqual(sum(e["classification"] == "depth_not_evaluated" for e in report["candidates"]), 28)
         self.assertEqual(json.dumps(report), json.dumps(build(list(reversed(people)), depth_limit=2)))
         self.assertTrue(all(e["xi"]["impact"]["monotonic_objective_verified"] for e in report["candidates"]))
