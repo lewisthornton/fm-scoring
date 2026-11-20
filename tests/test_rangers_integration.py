@@ -282,12 +282,18 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(sum(c[:2] == ("export", "league-tables") for c in self.commands), metadata_reads + 1)
 
         self.game_date = "2027-01-03"
+        # Simulate the FM27 export omitting the league table entirely. The
+        # fixture-only provenance changes, but the aggregate is still valid.
+        self.league_tables = []
         self.process(benchmark_root=self.root, benchmark_names=names)
         self.render()
         later = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(later["game_date"], "2027-01-03")
         self.assertEqual(later["extraction_game_date"], DATE)
         self.assertEqual(later["reference"], first["reference"])
+        self.assertEqual(later["detection"]["method"], "automatic_fixture_led")
+        self.assertTrue(later["detection"]["evidence"]["league_tables_missing"])
+        self.assertIn("competition_inferred_from_fixtures_without_complete_tables", later["warnings"])
         self.assertEqual(later["provenance"]["reference_save_sha256"], first["provenance"]["reference_save_sha256"])
         self.assertTrue(any("reference_extracted_on_earlier_game_date" in c["warnings"] for c in later["comparisons"]))
         self.game_date = "2027-02-01"
