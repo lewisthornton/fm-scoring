@@ -77,6 +77,29 @@ class OptimalXITests(unittest.TestCase):
         self.assertEqual(result["solver"]["filled_slots"], 1)
         self.assertIn("eligible_players_assigned_elsewhere", {a["vacancy_reason"] for a in result["assignments"]})
 
+    def test_selection_mode_and_explicit_phase_gate_are_independent(self):
+        rb = person("rb", ["dr"])
+        for mode in ("strict", "relaxed"):
+            contextual = report([rb], ASYM, policy={"mode": mode})
+            self.assertEqual(assignments(contextual)["rb"]["player_id"], "rb")
+            self.assertEqual(contextual["eligibility_policy"]["mode"], mode)
+            gated = report([rb], ASYM, policy={"mode": mode, "phase_eligibility": "require_weighted_phases"})
+            self.assertIsNone(assignments(gated)["rb"]["player_id"])
+            self.assertIn("ip_phase_familiarity_not_confirmed", gated["excluded_or_uncertain_players"][0]["slot_exclusions"]["rb"])
+        unknown = person("unknown", ["dr"])
+        unknown["raw"]["positions_dc"] = ""
+        self.assertIsNone(assignments(report([unknown], ASYM, policy={"phase_eligibility": "require_weighted_phases"}))["rb"]["player_id"])
+        alternate = person("wide", ["mr"])
+        self.assertIsNone(assignments(report([alternate], policy={"version": 1}))["rw"]["player_id"])
+        relaxed = assignments(report([alternate], policy={"mode": "relaxed"}))["rw"]
+        self.assertEqual(relaxed["eligibility_position"], "mr")
+        self.assertEqual(relaxed["selection_position"], "amr")
+        self.assertIn("relaxed_alternative_position_eligibility", relaxed["warnings"])
+        import copy
+        zero = copy.deepcopy(ASYM)
+        zero["phase_weights"] = {"ip": 0.0, "oop": 1.0}
+        self.assertEqual(assignments(report([rb], zero, policy={"phase_eligibility": "require_weighted_phases"}))["rb"]["player_id"], "rb")
+
     def test_loans_cohorts_availability(self):
         people = [person("incoming", ["dc"], loan="incoming"), person("outgoing", ["dc"], score=20, loan="outgoing", availability="unavailable"),
                   person("target", ["dc"], score=20, cohorts=("target",)), person("both", ["dc"], cohorts=("squad", "target")),
