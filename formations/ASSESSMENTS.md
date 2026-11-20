@@ -101,7 +101,7 @@ and slots (array in declared formation order). Record date/build refer to
 the last changed player version, while last_seen_game_date refers to current
 cohort membership. No wall-clock date is substituted for missing evidence.
 
-Each SlotAssessment contains player_id, slot_id, label, side, profile and
+Each SlotAssessment contains player_id, slot_id, label, side, profile, selection_position and
 availability strings; accepted_positions keyed by native code; ip and oop
 PhaseAssessment; attribute_profile_score (number or null);
 attribute_profile_reason (missing_attributes / incompatible_player_type / null);
@@ -114,6 +114,6 @@ position_fit_reason (string or null), and observed_role_suitability (null).
 
 The sidecar is deterministic for identical input. Existing recruitment and
 native HTML remain unchanged. No player data migration is required.
-The future XI optimiser still needs eligibility policies for missing/low
-familiarity and availability, an objective respecting the separate metrics,
-and a one-player-per-slot assignment solver.
+The XI optimiser uses the single selection position for eligibility and the
+attribute score for the objective. Phase metrics and null role evidence remain
+context. See [the audit and UI contract](AUDIT_AND_UI_CONTRACT.md).
