@@ -51,6 +51,80 @@ def aggregate(rows, clubs):
 
 
 class LeagueBenchmarkTests(unittest.TestCase):
+    def test_preseason_33_roundless_reciprocal_fixtures_without_tables(self):
+        clubs, comps, _, fixtures = competition_fixture(comp="33")
+        # 11 opponents, three meetings each, 16 home and 17 away.
+        extra = [dict(f, home_club_uid=f["away_club_uid"], away_club_uid=f["home_club_uid"]) if i >= 5 else dict(f)
+                 for i, f in enumerate(fixtures[:11])]
+        fixtures = [dict(f, date=(date(2026, 7, 31) + timedelta(days=round(i * 253 / 32))).isoformat())
+                    for i, f in enumerate(fixtures + extra)]
+        comps[0]["stage_ids"] = "33"
+        result = detect((clubs, comps, [], fixtures), "2026-07-13")
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["method"], "automatic_fixture_led")
+        self.assertEqual(result["competition"]["id"], "33")
+        self.assertEqual(result["competition"]["name_source"], "identifier_label")
+        self.assertEqual(result["club_uids"], sorted(c["uid"] for c in clubs))
+        evidence = result["evidence"]
+        self.assertEqual((evidence["fixture_count"], evidence["home_fixture_count"], evidence["away_fixture_count"]), (33, 16, 17))
+        self.assertEqual(evidence["reciprocal_opponent_count"], 11)
+        self.assertTrue(evidence["league_tables_missing"])
+        self.assertEqual(evidence["last_fixture_date"], "2027-04-10")
+        self.assertEqual(detect((clubs, comps, [], fixtures), "2026-07-13", override="33")["method"], "manual_override")
+
+    def test_partial_tables_and_conflicting_table_membership(self):
+        clubs, comps, tables, fixtures = competition_fixture()
+        partial = [dict(tables[0], rows=tables[0]["rows"][:6], club_count=12)]
+        result = detect((clubs, comps, partial, fixtures))
+        self.assertEqual(result["method"], "automatic_fixture_led")
+        self.assertEqual(result["evidence"]["table_status"], "incomplete")
+        self.assertEqual(len(result["club_uids"]), 12)
+        partial[0]["club_count"] = 13
+        rejected = detect((clubs, comps, partial, fixtures))
+        self.assertIn("table_declares_more_clubs_than_calendar", rejected["diagnostics"][0]["reasons"])
+        partial[0]["club_count"] = 12
+        clubs.append({"uid": "999", "nation_id": "7"})
+        partial[0]["rows"].append({"club_uid": "999", "team_slot": 0})
+        self.assertIn("table_fixture_membership_conflict", detect((clubs, comps, partial, fixtures))["diagnostics"][0]["reasons"])
+
+    def test_fixture_only_rejections_and_override_constraints(self):
+        clubs, comps, _, fixtures = competition_fixture()
+        cases = [([], fixtures, "missing_or_ambiguous_competition_metadata"),
+                 (comps + comps, fixtures, "missing_or_ambiguous_competition_metadata"),
+                 ([{"id": "500"}], fixtures, "fixture_only_competition_identity_uncorroborated"),
+                 (comps, fixtures[:-1], "missing_reciprocal_opponents"),
+                 (comps, [dict(f, round_code="99") for f in fixtures], "round_or_stage_evidence_not_league_like"),
+                 (comps, [dict(f, date=(date(2026, 8, 1)+timedelta(days=i*6)).isoformat()) for i,f in enumerate(fixtures)], "calendar_span_too_short"),
+                 (comps, fixtures + [dict(fixtures[0])], "duplicate_fixture_dates"),
+                 ([dict(comps[0], stage_ids="999")], fixtures, "competition_stage_metadata_conflict")]
+        for metadata, calendar, reason in cases:
+            with self.subTest(reason=reason):
+                result = detect((clubs, metadata, [], calendar), override="500")
+                self.assertEqual(result["status"], "unavailable")
+                self.assertIn(reason, result["diagnostics"][0]["reasons"])
+        clubs[-1]["nation_id"] = "8"
+        result = detect((clubs, comps, [], fixtures))
+        self.assertIn("opponents_not_unique_domestic_clubs", result["diagnostics"][0]["reasons"])
+        clubs[-1]["nation_id"] = "7"
+        youth = [dict(f, home_team_slot=1, away_team_slot=1) for f in fixtures]
+        self.assertEqual(detect((clubs, comps, [], youth))["status"], "unavailable")
+        friendlies = [dict(f, competition_id="") for f in fixtures]
+        result = detect((clubs, comps, [], friendlies))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["ignored_fixture_counts"]["missing_competition_id"], len(fixtures))
+
+    def test_fixture_only_ambiguity_and_season_transition(self):
+        old = competition_fixture(comp="501", db_id="9001")
+        new = competition_fixture(comp="500", db_id="9000", season=2027, members=["100"] + [str(i) for i in range(200,211)])
+        other = competition_fixture(comp="502", db_id="9002")
+        ambiguous = detect((old[0], old[1] + other[1], [], old[3] + other[3]))
+        self.assertEqual(ambiguous["reason"], "ambiguous_competition_or_season")
+        self.assertEqual(len(ambiguous["candidates"]), 2)
+        result = detect((old[0] + new[0][1:], old[1] + new[1], [], old[3] + new[3]), "2027-09-01")
+        self.assertEqual(result["competition"]["id"], "500")
+        self.assertEqual(result["season_start_year"], 2027)
+        self.assertEqual(result["method"], "automatic_fixture_led")
+        self.assertEqual(result["club_uids"], sorted(c["uid"] for c in new[0]))
     def test_scottish_detection_and_split_tables(self):
         clubs, comps, tables, fixtures = competition_fixture()
         all_rows = tables[0]["rows"]
@@ -139,6 +213,8 @@ class LeagueBenchmarkTests(unittest.TestCase):
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["competition"]["id"], "700")
         self.assertEqual(result["competition"]["league_nation_id"], "9")
+        fallback = league.detect_competition("1100", "9", clubs, comps, [], fixtures, "2027-01-01")
+        self.assertEqual(fallback["method"], "automatic_fixture_led")
 
     def test_non_domestic_and_youth_tables_rejected(self):
         clubs, comps, tables, fixtures = competition_fixture()
