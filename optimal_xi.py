@@ -6,7 +6,7 @@ import json
 import math
 
 
-DEFAULT_POLICY = {"version": 1, "minimum_familiarity": 15, "allow_category_evidence": True,
+DEFAULT_POLICY = {"version": 2, "minimum_familiarity": 15, "allow_category_evidence": True,
                   "allow_unknown_availability": False}
 
 
@@ -14,8 +14,10 @@ def eligibility_policy(settings=None):
     if settings is not None and not isinstance(settings, dict):
         raise ValueError("XI policy must be a JSON object")
     policy = {**DEFAULT_POLICY, **(settings or {})}
-    if set(policy) != set(DEFAULT_POLICY) or type(policy["version"]) is not int or policy["version"] != 1:
+    if set(policy) != set(DEFAULT_POLICY) or type(policy["version"]) is not int or policy["version"] not in (1, 2):
         raise ValueError("Unsupported XI eligibility policy")
+    # Legacy settings retain their thresholds, not the unsafe broad eligibility.
+    policy["version"] = 2
     if type(policy["minimum_familiarity"]) is not int or not 1 <= policy["minimum_familiarity"] <= 20:
         raise ValueError("XI minimum familiarity must be an integer from 1 to 20")
     if any(type(policy[k]) is not bool for k in ("allow_category_evidence", "allow_unknown_availability")):
@@ -90,8 +92,9 @@ def exclusion_reasons(player, slot, evidence, policy):
     score = evidence["attribute_profile_score"]
     if type(score) not in (int, float) or not math.isfinite(score) or evidence["attribute_profile_reason"] is not None:
         reasons.append("incomplete_attribute_profile")
-    if not any(confirmed(evidence["accepted_positions"].get(code), policy) for code in slot["positions"]):
-        reasons.append("accepted_position_familiarity_not_confirmed")
+    position = slot.get("selection_position", slot["positions"][0])
+    if not confirmed(evidence["accepted_positions"].get(position), policy):
+        reasons.append("selection_position_familiarity_not_confirmed")
     return reasons
 
 
@@ -155,6 +158,7 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
         sid = slot["id"]
         key = chosen[sid]
         row = {"slot_id": sid, "label": slot["label"], "side": slot["side"], "profile": slot["profile"],
+               "selection_position": slot.get("selection_position", slot["positions"][0]),
                "player_id": key, "display_name": None, "attribute_profile_score": None, "assessment": None,
                "warnings": [], "league_benchmark": None, "league_benchmark_reason": context_reason, "vacancy_reason": None}
         if key is None:
@@ -192,7 +196,7 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
             "assignments": assignments, "outfield_total": math.fsum(r["attribute_profile_score"] for r in assignments if r["profile"] != "GK" and r["player_id"] is not None),
             "goalkeeper_total": next((r["attribute_profile_score"] for r in assignments if r["profile"] == "GK"), None),
             "excluded_or_uncertain_players": [e for e in excluded if not e["selected"] or e["availability"] != "available"],
-            "limitations": ["Not a match-outcome prediction or FM role suitability rating.", "Availability reflects squad/loan status, not fitness, injuries, suspension or registration.", "Unknown familiarity is not zero; phase fit and league benchmarks are context only."]}
+            "limitations": ["Not a match-outcome prediction or FM role suitability rating.", "Availability reflects squad/loan status, not fitness, injuries, suspension or registration.", "Unknown familiarity is not zero; phase fit and league benchmarks are context only.", "Save-file attributes may include values hidden by in-game scouting knowledge.", "Raw weighted profiles assume comparable marginal units across outfield slots; not calibrated."]}
 
 
 def render_html(report):
@@ -214,7 +218,7 @@ def render_html(report):
         phases = [f"{a[phase]['position'] or 'unspecified'}: {fit(a[phase]['familiarity'])}" if a else "—" for phase in ("ip", "oop")]
         league = (row["league_benchmark"] or {}).get("percentile")
         score = row["attribute_profile_score"]
-        cells = [row["label"], row["display_name"] or "VACANT", row["profile"], f"{score:.2f}" if score is not None else None,
+        cells = [f'{row["label"]} ({row["selection_position"].upper()})', row["display_name"] or "VACANT", row["profile"], f"{score:.2f}" if score is not None else None,
                  accepted, *phases, f"{league:.1f}" if league is not None else None,
                  "; ".join(row["warnings"] + ([row["vacancy_reason"]] if row["vacancy_reason"] else []) + ([row["league_benchmark_reason"]] if row["league_benchmark_reason"] else []) + (row["league_benchmark"] or {}).get("warnings", []))]
         rows.append("<tr>" + "".join(f"<td>{text(c)}</td>" for c in cells) + "</tr>")
