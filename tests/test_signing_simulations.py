@@ -142,9 +142,12 @@ class SigningTests(unittest.TestCase):
         benchmark = {"version": 1, "status": "available", "career": "invented", "game_date": "2027-01-01", "scoring_model": data["scoring_model"],
                      "competition": {"id": "100"}, "extraction_game_date": "2026-12-15", "reference": {"profiles": {"FB": {"contributing_clubs": 8}}},
                      "comparisons": [{"player_id": "new", "profile": "FB", "reason": None, "percentile": 90, "warnings": [], "sample_size": 40}]}
+        benchmark["native_comparisons"] = [dict(benchmark["comparisons"][0], native_position="dl", reference_population="native_position", percentile=75)]
         old = copy.deepcopy(benchmark)
         e = candidate(build(people, benchmark=benchmark), "new")
         self.assertEqual(e["league_context"]["FB"]["comparison"]["percentile"], 90)
+        self.assertEqual(e["native_league_context"]["FB:dl"]["comparison"]["percentile"], 75)
+        self.assertIsNone(e["native_league_context"]["FB:dr"]["comparison"])
         stale = candidate(build(people, benchmark=dict(benchmark, extraction_game_date="2026-01-01")), "new")
         self.assertIsNone(stale["league_context"]["FB"]["comparison"])
         self.assertEqual(stale["xi"]["hypothetical"], e["xi"]["hypothetical"])
