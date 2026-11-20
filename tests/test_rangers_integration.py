@@ -430,6 +430,15 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn(other["name"], before_signings.decode("utf-8"))
         depth = json.loads(before_depth)
         self.assertEqual(depth["baseline"], xi)
+        for report in (xi, depth, signings):
+            for key in ("career", "game_date", "formation", "scoring_model"):
+                self.assertEqual(report[key], data[key])
+            self.assertEqual(report["eligibility_policy"], xi["eligibility_policy"])
+        self.assertEqual(xi["eligibility_policy"]["version"], 2)
+        self.assertTrue(data["source_data"]["may_include_unscouted_attributes"])
+        self.assertFalse(signings["scenario_assumptions"]["registration_established"])
+        for row in xi["assignments"]:
+            self.assertEqual(row["selection_position"], next(s["selection_position"] for s in selected["slots"] if s["id"] == row["slot_id"]))
         self.assertNotIn(self.unselected["name"], before_depth.decode("utf-8"))
         self.assertNotIn(other["name"], before_depth.decode("utf-8"))
         for row in depth["coverage"]:

@@ -47,6 +47,7 @@ class FormationTests(unittest.TestCase):
         self.assertEqual(slots["rb"]["ip"]["position"], "dc")
         self.assertEqual(slots["lb"]["oop"]["position"], "dl")
         self.assertEqual(slots["rb"]["oop"]["position"], "dr")
+        self.assertEqual(slots["rb"]["selection_position"], "dr")
         self.assertNotEqual(slots["lb"]["ip"]["role"], slots["rb"]["ip"]["role"])
         self.assertNotEqual(slots["lcb"]["oop"]["role"], slots["rcb"]["oop"]["role"])
         self.assertEqual(slots["am"]["ip"]["role"], "Custom pocket creator")
@@ -54,6 +55,15 @@ class FormationTests(unittest.TestCase):
         self.assertNotEqual([s["ip"]["position"] for s in slots.values()],
                             [s["oop"]["position"] for s in slots.values()])
         self.assertTrue(all(s[p]["suitability"] is None for s in slots.values() for p in ("ip", "oop")))
+
+    def test_explicit_selection_position_is_validated(self):
+        slot = next(s for s in self.config["slots"] if s["id"] == "rw")
+        slot["selection_position"] = "mr"
+        tactic = formation.validate_formation(self.config, PROFILES)
+        self.assertEqual(next(s for s in tactic["slots"] if s["id"] == "rw")["selection_position"], "mr")
+        slot["selection_position"] = "ml"
+        with self.assertRaisesRegex(ValueError, "selection_position"):
+            formation.validate_formation(self.config, PROFILES)
 
     def test_custom_labels_phase_side_and_optional_responsibilities(self):
         self.config["slots"][1]["label"] = "My unusual flank"

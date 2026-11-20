@@ -1,6 +1,7 @@
 """Read-only, single-candidate counterfactuals over existing scoped assessments."""
 import copy
 from fractions import Fraction
+from collections import Counter
 from html import escape
 import hashlib
 import json
@@ -188,7 +189,7 @@ def build_signing_simulations(formation, assessment, benchmark=None, *, optimize
         entry["scenario_assumed_availability"] = "available"
         for slot in formation["slots"]:
             evidence = next((s for s in hyp["slots"] if s["slot_id"] == slot["id"]), None)
-            reasons = optimizer.exclusion_reasons(hyp, slot, evidence, policy)
+            reasons = optimizer.exclusion_reasons(hyp, slot, evidence, policy, phase_weights=formation["phase_weights"])
             if reasons:
                 entry["rejected_slots"].append({"slot_id": slot["id"], "reasons": reasons})
             else:
@@ -211,7 +212,7 @@ def build_signing_simulations(formation, assessment, benchmark=None, *, optimize
             entry["classification"] = "starting_upgrade"
         elif not entry["eligible_slot_ids"]:
             relevant = [s for s in p["slots"] if (s["profile"] == "GK") == p["keeper"]]
-            unknown = not relevant or any(s["attribute_profile_score"] is None or any(e["status"] == "missing" for e in s["accepted_positions"].values()) for s in relevant)
+            unknown = not relevant or any(s["attribute_profile_score"] is None or s["accepted_positions"].get(s["selection_position"], {}).get("status") == "missing" for s in relevant)
             entry["classification"] = "insufficient_evidence" if unknown else "no_demonstrated_improvement"
             entry["depth"] = {"status": "not_applicable_no_eligible_slot"}
         else:
@@ -238,11 +239,14 @@ def build_signing_simulations(formation, assessment, benchmark=None, *, optimize
         if entry["classification"] == "depth_not_evaluated":
             entry["classification"] = "depth_improvement" if entry["depth"]["improved"] else "no_demonstrated_improvement"
     candidates.sort(key=rank)
+    coverage = {"target_count": len(candidates), "xi_evaluated_count": sum(e["xi"] is not None for e in candidates),
+                "depth_status_counts": dict(sorted(Counter(e["depth"]["status"] for e in candidates).items())),
+                "classification_counts": dict(sorted(Counter(e["classification"] for e in candidates).items()))}
     return copy.deepcopy({"version": 1, **provenance, "objective": baseline["objective"], "baseline": {"xi_file": "optimal_xi.json", "depth_file": "squad_depth.json", "totals": totals(baseline)},
-                          "assumptions": ASSUMPTIONS, "depth_limit": depth_limit, "depth_evaluated_count": sum(e["depth"]["status"] == "evaluated" for e in candidates),
+                          "assumptions": ASSUMPTIONS, "scenario_assumptions": {"availability_hypothetical": True, "interest_established": False, "affordability_established": False, "registration_established": False, "fitness_established": False, "may_include_unscouted_attributes": True}, "depth_limit": depth_limit, "depth_evaluated_count": sum(e["depth"]["status"] == "evaluated" for e in candidates), "evaluation_coverage": coverage,
                           "ranking_rationale": "Completeness before starting upgrades; outfield and goalkeeper grouped separately; depth-only gains ordered by rescued absence count, bench capacity, newly covered slots, then stable ID. Unevaluated depth is explicit.",
                           "player_directory": {key: p["display_name"] for key, p in sorted(players.items())},
-                          "candidates": candidates, "limitations": ["Uncalibrated attribute-based selection; no predicted match wins or role suitability.", "No transfer feasibility, fees, registration or affordability assumptions beyond hypothetical selection availability.", "Depth shortlist is bounded; no conclusion about unanalysed depth."]})
+                          "candidates": candidates, "limitations": ["Uncalibrated attribute-based selection; no predicted match wins or role suitability.", "No transfer feasibility, interest, fees, registration, fitness or affordability assumptions beyond hypothetical selection availability.", "Save-file attributes may include values hidden by in-game scouting knowledge.", "Depth shortlist is bounded; no conclusion about unanalysed depth."]})
 
 
 def render_html(report):
