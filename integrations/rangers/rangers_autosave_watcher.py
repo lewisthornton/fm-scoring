@@ -42,9 +42,8 @@ BASE_FIELDS = {
     'loan_parent_club_name','loan_end','traits','traits_code',
 }
 FIELD_PREFIXES=('attributes_','positions_','personality_')
-SCHEMA='''
-PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS snapshots (
+SNAPSHOT_COLUMNS='id,career,source_file,source_sha256,selection_sha256,game_date,game_build,imported_utc,player_count,changed_count'
+SNAPSHOT_SCHEMA='''CREATE TABLE {name} (
     id INTEGER PRIMARY KEY,
     career TEXT NOT NULL,
     source_file TEXT NOT NULL,
@@ -54,10 +53,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
     game_build TEXT,
     imported_utc TEXT NOT NULL,
     player_count INTEGER NOT NULL,
-    changed_count INTEGER NOT NULL,
-    UNIQUE(career,source_sha256,selection_sha256)
-);
+    changed_count INTEGER NOT NULL
+)'''
+SCHEMA='''
+PRAGMA foreign_keys = ON;
+'''+SNAPSHOT_SCHEMA.format(name='IF NOT EXISTS snapshots')+''';
 CREATE INDEX IF NOT EXISTS ix_snapshots_career_date ON snapshots(career,game_date);
+CREATE INDEX IF NOT EXISTS ix_snapshots_pair ON snapshots(career,source_sha256,selection_sha256);
 CREATE TABLE IF NOT EXISTS player_versions (
     snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
     career TEXT NOT NULL,
@@ -345,13 +347,61 @@ def initialise_chronology(db):
                        latest.items())
 
 
+def migrate_snapshot_pairs(db):
+    """Remove the legacy globally unique pair constraint without changing IDs.
+
+    A save/filter pair identifies input bytes, not an import event. An observed
+    state may return after a different import at the same game date. Keep those
+    transitions as immutable revisions and suppress only unchanged imports.
+    SQLite requires a table rebuild to remove an inline UNIQUE constraint.
+    Foreign-key enforcement is suspended only on this connection, outside the
+    transaction; all writes and the integrity check occur under BEGIN IMMEDIATE.
+    """
+    def legacy():
+        for _, name, unique, origin, *_ in db.execute('PRAGMA index_list(snapshots)'):
+            if unique and origin=='u':
+                quoted=name.replace('"','""')
+                if [row[2] for row in db.execute(f'PRAGMA index_info("{quoted}")')]==['career','source_sha256','selection_sha256']:
+                    return True
+        return False
+
+    if not legacy():
+        return
+    db.execute('PRAGMA foreign_keys=OFF')
+    try:
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            # Another watcher may have migrated while we waited for the lock.
+            if not legacy():
+                return
+            # Preserve explicit indexes/triggers, including user-created ones.
+            objects=[row[0] for row in db.execute('''SELECT sql FROM sqlite_master
+                WHERE tbl_name='snapshots' AND type IN ('index','trigger') AND sql IS NOT NULL
+                ORDER BY type,name''')]
+            db.execute(SNAPSHOT_SCHEMA.format(name='snapshots_pair_migration'))
+            db.execute(f'INSERT INTO snapshots_pair_migration ({SNAPSHOT_COLUMNS}) SELECT {SNAPSHOT_COLUMNS} FROM snapshots')
+            db.execute('DROP TABLE snapshots')
+            db.execute('ALTER TABLE snapshots_pair_migration RENAME TO snapshots')
+            for statement in objects:
+                db.execute(statement)
+            if db.execute('PRAGMA foreign_key_check').fetchone() is not None:
+                raise sqlite3.IntegrityError('Snapshot-pair migration failed foreign-key validation')
+    finally:
+        db.execute('PRAGMA foreign_keys=ON')
+
+
 def connect(path):
     path.parent.mkdir(parents=True,exist_ok=True)
     db=sqlite3.connect(path,timeout=60)
-    db.execute('PRAGMA busy_timeout=60000')
-    db.execute('PRAGMA journal_mode=WAL')
-    db.executescript(SCHEMA)
-    initialise_chronology(db)
+    try:
+        db.execute('PRAGMA busy_timeout=60000')
+        db.execute('PRAGMA journal_mode=WAL')
+        db.executescript(SCHEMA)
+        migrate_snapshot_pairs(db)
+        initialise_chronology(db)
+    except BaseException:
+        db.close()
+        raise
     return db
 
 
@@ -418,6 +468,10 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
             if previous.get(key)!=digest:
                 changes.append((key,row,digest,payload))
         if changes:
+            # The pair can repeat after an intervening accepted observation.
+            # Append a new immutable event only when the latest state changes;
+            # identical repeats below still update cohort membership but do not
+            # create additional snapshot/player version rows.
             c=db.execute('''INSERT INTO snapshots
                (career,source_file,source_sha256,selection_sha256,game_date,game_build,imported_utc,player_count,changed_count)
                VALUES (?,?,?,?,?,?,?,?,?)''',
