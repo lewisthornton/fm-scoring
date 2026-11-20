@@ -189,7 +189,7 @@ def build_signing_simulations(formation, assessment, benchmark=None, *, optimize
         entry["scenario_assumed_availability"] = "available"
         for slot in formation["slots"]:
             evidence = next((s for s in hyp["slots"] if s["slot_id"] == slot["id"]), None)
-            reasons = optimizer.exclusion_reasons(hyp, slot, evidence, policy)
+            reasons = optimizer.exclusion_reasons(hyp, slot, evidence, policy, phase_weights=formation["phase_weights"])
             if reasons:
                 entry["rejected_slots"].append({"slot_id": slot["id"], "reasons": reasons})
             else:
