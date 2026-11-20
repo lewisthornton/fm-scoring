@@ -164,7 +164,7 @@ class OptimalXITests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", view)
         self.assertNotIn("<script>", view)
         self.assertIn("VACANT", view)
-        for policy in ({"version": 2}, {"minimum_familiarity": 0}, {"allow_category_evidence": 1}, {"extra": True}):
+        for policy in ({"version": 3}, {"minimum_familiarity": 0}, {"allow_category_evidence": 1}, {"extra": True}):
             with self.assertRaises(ValueError):
                 xi.eligibility_policy(policy)
 
