@@ -123,7 +123,9 @@ def benchmark_context(benchmark, assessment):
         return {}, "benchmark_date_missing"
     if not 0 <= age < 30:
         return {}, "benchmark_reference_stale"
-    return {(item["player_id"], item["profile"]): {**item, "reference_population": "profile_group"} for item in benchmark["comparisons"]}, None
+    context = {(item["player_id"], item["profile"]): {**item, "reference_population": "profile_group"} for item in benchmark["comparisons"]}
+    context.update({(item["player_id"], item["profile"], item["native_position"]): item for item in benchmark.get("native_comparisons", [])})
+    return context, None
 
 
 def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excluded_player_ids=()):
@@ -192,13 +194,13 @@ def build_optimal_xi(formation, assessment, benchmark=None, *, policy=None, excl
                     row["warnings"].append(phase + "_category_only")
             if p["availability"] != "available":
                 row["warnings"].append("unknown_availability_allowed_by_policy")
-            comparison = context.get((key, slot["profile"]))
+            comparison = context.get((key, slot["profile"], row["selection_position"]))
             if comparison is not None:
                 row["league_benchmark"] = {**comparison, "competition": benchmark["competition"],
                                            "extraction_game_date": benchmark["extraction_game_date"]}
                 row["league_benchmark_reason"] = comparison["reason"]
             elif context_reason is None:
-                row["league_benchmark_reason"] = "no_matching_profile_comparison"
+                row["league_benchmark_reason"] = "no_matching_native_position_comparison"
         assignments.append(row)
     for entry in excluded:
         entry["selected"] = entry["player_id"] in selected
