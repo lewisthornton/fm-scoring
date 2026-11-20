@@ -11,7 +11,8 @@ MIN_ATTRIBUTE_COVERAGE = 0.75
 REFRESH_DAYS = 30
 SEASON_GRACE_DAYS = 31
 MIN_LEAGUE_SPAN_DAYS = 120
-DETECTION_POLICY = 2
+MIN_FIXTURE_ONLY_SPAN_DAYS = 180
+DETECTION_POLICY = 3
 
 
 def identifier(value):
@@ -55,15 +56,17 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
         key = identifier(comp.get("id"))
         if key is not None:
             by_id[key].append(comp)
-    groups, invalid, unresolved = defaultdict(set), set(), False
+    groups, invalid, incomplete, unresolved = defaultdict(set), set(), set(), False
+    table_counts = defaultdict(int)
     for table in tables:
         rows = table.get("rows")
-        if not isinstance(rows, list) or len(rows) < 2:
+        if not isinstance(rows, list) or not rows:
             continue
         ids = [identifier(row.get("club_uid")) for row in rows]
         comp = identifier(table.get("competition_id"))
         supplied_count = table.get("club_count")
-        valid = ((supplied_count is None or identifier(supplied_count) == str(len(rows)))
+        count = identifier(supplied_count)
+        valid = ((supplied_count is None or (count is not None and int(count) >= len(rows)))
                  and len(set(ids)) == len(ids) and all(uid in domestic for uid in ids)
                  and all(identifier(row.get("team_slot")) == "0" for row in rows))
         if not valid:
@@ -72,25 +75,44 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
             continue
         if comp is None:
             # An unresolved split can contain fewer than eight clubs.
-            unresolved |= managed_uid in ids
+            unresolved |= managed_uid in ids and len(rows) >= 2
             continue
         groups[comp].update(ids)
+        if count is not None:
+            table_counts[comp] = max(table_counts[comp], int(count))
+        if count is not None and int(count) > len(rows):
+            incomplete.add(comp)
 
     # The saved season_start_year field is authoritative for each fixture;
     # dates establish which of those seasons is plausibly current.
     calendars = defaultdict(list)
+    rejected_fixtures = defaultdict(set)
+    fixture_stages = defaultdict(set)
+    seen_competitions = set()
+    ignored = Counter()
     for fixture in fixtures:
         comp = identifier(fixture.get("competition_id"))
         year = identifier(fixture.get("season_start_year"))
         played = game_date(fixture.get("date"))
         home = identifier(fixture.get("home_club_uid"))
         away = identifier(fixture.get("away_club_uid"))
-        if (comp is None or year is None or played is None or
-                identifier(fixture.get("home_team_slot")) != "0" or
-                identifier(fixture.get("away_team_slot")) != "0" or
-                managed_uid not in (home, away)):
+        if managed_uid not in (home, away):
+            ignored["not_managed_club"] += 1
             continue
-        if not 1 <= int(year) <= 9999 or played.year not in (int(year), int(year) + 1):
+        if comp is None:
+            ignored["missing_competition_id"] += 1
+            continue
+        seen_competitions.add(comp)
+        home_slot, away_slot = identifier(fixture.get("home_team_slot")), identifier(fixture.get("away_team_slot"))
+        if any(slot is not None and slot != "0" for slot in (home_slot, away_slot)):
+            ignored["non_first_team"] += 1
+            continue  # known youth/reserve fixture is not first-team evidence
+        season = int(year) if year is not None and 1 <= int(year) <= 9999 else None
+        if season is None or played is None or played.year not in (season, season + 1):
+            rejected_fixtures[(comp, season)].add("invalid_fixture_date_or_season")
+            continue
+        if home_slot != "0" or away_slot != "0":
+            rejected_fixtures[(comp, season)].add("unknown_fixture_team_slot")
             continue
         opponent = away if home == managed_uid else home
         # CSV exports coded rounds as a label and raw code; an unknown
@@ -98,29 +120,82 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
         roundless = (identifier(fixture.get("stage_id")) is not None
                      and "round" in fixture and "round_code" in fixture
                      and fixture["round"] in (None, "") and fixture["round_code"] in (None, ""))
-        calendars[(comp, int(year))].append((played, opponent, home == managed_uid, roundless))
+        calendars[(comp, season)].append((played, opponent, home == managed_uid, roundless))
+        fixture_stages[(comp, season)].add(identifier(fixture.get("stage_id")))
 
     candidates = []
-    for comp, members in sorted(groups.items()):
-        if comp in invalid or managed_uid not in members or len(members) < MIN_LEAGUE_CLUBS:
-            continue
-        if len(by_id[comp]) != 1:
-            continue
-        for (fixture_comp, season), calendar in sorted(calendars.items()):
-            if fixture_comp != comp:
+    diagnostics = []
+    relevant = seen_competitions | {comp for comp, members in groups.items() if managed_uid in members}
+    for comp in sorted(relevant):
+        table_members = groups.get(comp, set())
+        seasons = sorted({year for key, year in calendars if key == comp} |
+                         {year for key, year in rejected_fixtures if key == comp and year is not None})
+        if not seasons:
+            diagnostics.append({"id": comp, "season_start_year": None, "reasons": sorted(rejected_fixtures.get((comp, None), set()) | {"no_valid_first_team_calendar"})})
+        for season in seasons:
+            calendar = calendars.get((comp, season), [])
+            reasons = set(rejected_fixtures.get((comp, season), set())) | set(rejected_fixtures.get((comp, None), set()))
+            if not calendar:
+                diagnostics.append({"id": comp, "season_start_year": season, "reasons": sorted(reasons | {"no_valid_first_team_calendar"})})
                 continue
             dates = sorted(d for d, _, _, _ in calendar)
             opponents = {uid for _, uid, _, _ in calendar}
-            # Scottish split tables share a competition, so check the union
-            # against the entire season, not just one split's fixtures.
-            expected = members - {managed_uid}
-            if (opponents != expected or not all(no_round for _, _, _, no_round in calendar)
-                    or {uid for _, uid, home, _ in calendar if home} != expected
-                    or {uid for _, uid, home, _ in calendar if not home} != expected
-                    or (dates[-1] - dates[0]).days < MIN_LEAGUE_SPAN_DAYS):
-                continue
+            members = opponents | {managed_uid}
+            home_counts = Counter(uid for _, uid, home, _ in calendar if home)
+            away_counts = Counter(uid for _, uid, home, _ in calendar if not home)
+            table_complete = comp not in incomplete and table_members == members
+            table_status = "complete" if table_complete else "incomplete" if table_members else "missing"
+            method = "table_and_fixtures" if table_complete else "fixture_led"
+            span = (dates[-1] - dates[0]).days
+            proof = {"fixture_count": len(calendar), "opponent_count": len(opponents), "home_fixture_count": sum(home_counts.values()),
+                     "away_fixture_count": sum(away_counts.values()), "reciprocal_opponent_count": len(home_counts.keys() & away_counts.keys()),
+                     "first_fixture_date": dates[0].isoformat(), "last_fixture_date": dates[-1].isoformat(), "calendar_span_days": span,
+                     "table_status": table_status, "table_club_count": len(table_members), "league_tables_missing": not table_members,
+                     "detection_method": method, "domestic_club_count": len(members & domestic), "competition_metadata_count": len(by_id[comp]),
+                     "roundless_fixture_count": sum(no_round for _, _, _, no_round in calendar),
+                     "stage_count": len(fixture_stages[(comp, season)] - {None}),
+                     "minimum_meetings_per_opponent": min(home_counts[p] + away_counts[p] for p in opponents),
+                     "maximum_meetings_per_opponent": max(home_counts[p] + away_counts[p] for p in opponents)}
+            if comp in invalid:
+                reasons.add("invalid_or_conflicting_table")
+            if not table_members <= members:
+                reasons.add("table_fixture_membership_conflict")
+            if table_counts[comp] > len(members):
+                reasons.add("table_declares_more_clubs_than_calendar")
+            if len(by_id[comp]) != 1:
+                reasons.add("missing_or_ambiguous_competition_metadata")
+            else:
+                stage_ids = by_id[comp][0].get("stage_ids")
+                if not table_complete and identifier(by_id[comp][0].get("database_id")) is None and stage_ids in (None, "", []):
+                    reasons.add("fixture_only_competition_identity_uncorroborated")
+                if stage_ids not in (None, "", []):
+                    stage_ids = stage_ids.split(";") if isinstance(stage_ids, str) else stage_ids
+                    known_stages = {identifier(s) for s in stage_ids} if isinstance(stage_ids, (list, tuple)) else {None}
+                    if None in known_stages or not fixture_stages[(comp, season)] <= known_stages:
+                        reasons.add("competition_stage_metadata_conflict")
+            if managed_uid in opponents or not members <= domestic:
+                reasons.add("opponents_not_unique_domestic_clubs")
+            if len(members) < MIN_LEAGUE_CLUBS:
+                reasons.add("insufficient_distinct_clubs")
+            if not all(no_round for _, _, _, no_round in calendar):
+                reasons.add("round_or_stage_evidence_not_league_like")
+            if set(home_counts) != opponents or set(away_counts) != opponents:
+                reasons.add("missing_reciprocal_opponents")
+            if span < (MIN_LEAGUE_SPAN_DAYS if table_complete else MIN_FIXTURE_ONLY_SPAN_DAYS):
+                reasons.add("calendar_span_too_short")
+            if not table_complete:
+                # Stronger preseason gate: uniform round-robin multiplicity
+                # (two or more meetings each), allowing odd asymmetric rounds.
+                meetings = [home_counts[p] + away_counts[p] for p in opponents]
+                if len(set(meetings)) != 1 or any(abs(home_counts[p] - away_counts[p]) > 1 for p in opponents):
+                    reasons.add("unbalanced_fixture_only_calendar")
+                if len(set(dates)) != len(dates):
+                    reasons.add("duplicate_fixture_dates")
             gap = max((dates[0] - today).days, (today - dates[-1]).days, 0)
             if gap > SEASON_GRACE_DAYS:
+                reasons.add("season_outside_current_date_window")
+            diagnostics.append({"id": comp, "season_start_year": season, "evidence": proof, "reasons": sorted(reasons)})
+            if reasons:
                 continue
             record = by_id[comp][0]
             database_id = identifier(record.get("database_id"))
@@ -133,23 +208,24 @@ def detect_competition(managed_uid, nation_id, clubs, competitions, tables, fixt
                                 "league_nation_id": nation_id, "league_nation_database_id": nation_database_id,
                                 "league_nation_code": nation_code},
                 "season_start_year": season, "club_uids": sorted(members),
-                "evidence": {"fixture_count": len(calendar), "opponent_count": len(opponents),
-                             "first_fixture_date": dates[0].isoformat(), "last_fixture_date": dates[-1].isoformat()},
+                "evidence": proof,
             })
     options = [{"id": c["competition"]["id"], "season_start_year": c["season_start_year"]} for c in candidates]
+    details = {"candidates": options, "diagnostics": diagnostics, "unresolved_managed_table": unresolved,
+               "ignored_fixture_counts": dict(sorted(ignored.items()))}
     if override is not None:
         selected = [c for c in candidates if c["competition"]["id"] == identifier(override)]
         method = "manual_override"
         if len(selected) != 1:
-            return unavailable("override_not_uniquely_supported_by_current_evidence", candidates=options)
+            return unavailable("override_not_uniquely_supported_by_current_evidence", **details)
     else:
         selected = candidates
-        method = "automatic"
+        method = "automatic" if len(selected) != 1 or selected[0]["evidence"]["detection_method"] == "table_and_fixtures" else "automatic_fixture_led"
         if unresolved or len(selected) != 1:
             return unavailable("ambiguous_competition_or_season" if unresolved or selected else
-                               "no_corroborated_current_domestic_league", candidates=options)
+                               "no_corroborated_current_domestic_league", **details)
     return {"status": "available", "reason": None, **selected[0], "method": method,
-            "candidates": options}
+            **details}
 
 
 def quantile(values, probability):
@@ -317,7 +393,7 @@ def build_report(cache, people, career, observed_date, model_hash, profile_codes
                       season_start_year=detection["season_start_year"], detection=detection,
                       extraction_game_date=cache["extraction_game_date"], reference=cache["reference"],
                       provenance=cache["provenance"])
-        report["warnings"].append("competition_inferred_from_live_tables_and_fixtures")
+        report["warnings"].append("competition_inferred_from_fixtures_without_complete_tables" if detection.get("evidence", {}).get("detection_method") == "fixture_led" else "competition_inferred_from_live_tables_and_fixtures")
         if detection["competition"]["name_source"] == "identifier_label":
             report["warnings"].append("competition_display_name_unavailable")
     if isinstance(cache, dict) and "provenance" in cache:
