@@ -160,6 +160,8 @@ class SquadDepthTests(unittest.TestCase):
                      "comparisons": [{"player_id": p, "profile": "FB", "reason": None, "percentile": percentile,
                                       "sample_size": 40, "season_start_year": 2026, "difference_from_median": 1, "warnings": []}
                                      for p, percentile in (("rb", 80), ("backup-rb", 50))]}
+        benchmark["native_comparisons"] = [dict(c, native_position="dr", reference_population="native_position") for c in benchmark["comparisons"]]
+        benchmark["reference"]["native_profiles"] = {"FB:dr": {"contributing_clubs": 8}}
         before = copy.deepcopy(benchmark)
         contextual = report(people, benchmark=benchmark)
         self.assertEqual(benchmark, before)
