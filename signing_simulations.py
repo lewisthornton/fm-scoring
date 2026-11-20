@@ -195,6 +195,7 @@ def build_signing_simulations(formation, assessment, benchmark=None, *, optimize
             else:
                 entry["eligible_slot_ids"].append(slot["id"])
         entry["league_context"] = {profile: depth_module.league_context(benchmark, context, context_reason, key, profile) for profile in dict.fromkeys(slots.values())}
+        entry["native_league_context"] = {f'{slot["profile"]}:{slot["selection_position"]}': depth_module.league_context(benchmark, context, context_reason, key, slot["profile"], slot["selection_position"]) for slot in formation["slots"]}
         xi = optimizer.build_optimal_xi(formation, roster, benchmark, policy=policy)
         if any(xi[k] != v for k, v in provenance.items()):
             raise ValueError("Signing scenario provenance mismatch")
@@ -265,7 +266,10 @@ def render_html(report):
         league = next((s["profile"] for s in e["observed_slot_evidence"] if s["slot_id"] == selected), None)
         if league is None:
             league = next((s["profile"] for s in e["observed_slot_evidence"] if s["slot_id"] in e["eligible_slot_ids"]), None)
-        context = (e.get("league_context", {}).get(league) or {}).get("comparison") or {}
+        selection = next((s["selection_position"] for s in e["observed_slot_evidence"] if s["slot_id"] == selected), None)
+        if selection is None:
+            selection = next((s["selection_position"] for s in e["observed_slot_evidence"] if s["slot_id"] in e["eligible_slot_ids"]), None)
+        context = (e.get("native_league_context", {}).get(f"{league}:{selection}") or {}).get("comparison") or {}
         details = [f'Slot {esc(c["slot_id"])}: {name(c["before_player_id"])} → {name(c["after_player_id"])}' for c in impact.get("changes", [])]
         if impact.get("tie_break_only"):
             details.append("Equal objective; assignment changed by stable-ID tie-break only.")
@@ -275,7 +279,7 @@ def render_html(report):
         details += [f'Without {name(r["removed_player_id"])}: +{r["impact"]["filled_slot_gain"]} filled slots, outfield {score(r["impact"]["outfield_score_gain"])}, GK {score(r["impact"]["goalkeeper_score_gain"])}' for r in d.get("same_original_starter_absences", []) if r["impact"]["objective_improved"]]
         outcome = xi.get("hypothetical", {})
         cells = [esc(e["display_name"]), esc(e["observed_club"]), esc(e["classification"]), esc(selected), esc(impact.get("filled_slot_gain")), score(impact.get("outfield_score_gain")), score(impact.get("goalkeeper_score_gain")),
-                 esc(f'{outcome["filled_slots"]}/11; outfield {outcome["outfield_total"]:.2f}, GK {outcome["goalkeeper_total"]}' if outcome else None), esc(d["status"]), esc(d.get("bench_capacity_gain")), esc(f'{league}: {context["percentile"]:.1f}' if context.get("percentile") is not None else None),
+                 esc(f'{outcome["filled_slots"]}/11; outfield {outcome["outfield_total"]:.2f}, GK {outcome["goalkeeper_total"]}' if outcome else None), esc(d["status"]), esc(d.get("bench_capacity_gain")), esc(f'{selection.upper()} ({league}): {context["percentile"]:.1f}' if context.get("percentile") is not None else None),
                  '<details><summary>Evidence and changes</summary><ul>' + ''.join(f'<li>{v}</li>' for v in details) + '</ul></details>']
         rows.append('<tr>' + ''.join(f'<td>{v}</td>' for v in cells) + '</tr>')
     return ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Signing simulations</title><style>body{font:16px system-ui;margin:2rem;background:#101923;color:#e8f0f4}table{border-collapse:collapse;width:100%}td,th{padding:.6rem;border-bottom:1px solid #425362;text-align:left}a{color:#9cdefa}</style>'
