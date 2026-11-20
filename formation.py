@@ -80,7 +80,7 @@ def validate_formation(config, profiles):
     slots, seen = [], set()
     for index, raw in enumerate(raw_slots, 1):
         field = f"slots[{index}]"
-        table(raw, field, ("id", "label", "side", "positions", "profile"), PHASES)
+        table(raw, field, ("id", "label", "side", "positions", "profile"), (*PHASES, "selection_position"))
         identifier = text(raw["id"], f"{field}.id")
         if not re.fullmatch(r"[a-z][a-z0-9_-]*", identifier):
             raise ValueError(f"{field}.id: use a lowercase machine ID starting with a letter")
@@ -97,6 +97,7 @@ def validate_formation(config, profiles):
         positions = [choice(code, FM_POSITION_CODES, f"{field}.positions") for code in accepted]
         if len(set(positions)) != len(positions):
             raise ValueError(f"{field}.positions: duplicate position code")
+        selection_position = choice(raw.get("selection_position", positions[0]), set(positions), f"{field}.selection_position")
         if (profile == "GK" and positions != ["gk"]) or (profile != "GK" and "gk" in positions):
             raise ValueError(f"{field}: GK profile and goalkeeper position must agree")
         phases = {key: phase(raw.get(key), f"{field}.{key}", side) for key in PHASES}
@@ -105,7 +106,7 @@ def validate_formation(config, profiles):
             if pos is not None and (pos == "gk") != (profile == "GK"):
                 raise ValueError(f"{field}.{key}.position: goalkeeper and outfield positions cannot be interchanged")
         slots.append({"id": identifier, "label": label, "side": side, "positions": positions,
-                      "profile": profile, **phases})
+                      "profile": profile, "selection_position": selection_position, **phases})
     if sum(slot["profile"] == "GK" for slot in slots) != 1:
         raise ValueError("formation.slots: expected exactly one GK slot")
     return {"version": VERSION, "name": name, "phase_weights": phase_weights, "slots": slots}
