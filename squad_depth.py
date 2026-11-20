@@ -64,7 +64,7 @@ def build_squad_depth(formation, assessment, benchmark=None, *, optimizer, polic
         for p in players:
             key = p["player_id"]
             evidence = next((s for s in p["slots"] if s["slot_id"] == sid), None)
-            reasons = optimizer.exclusion_reasons(p, slot, evidence, policy)
+            reasons = optimizer.exclusion_reasons(p, slot, evidence, policy, phase_weights=formation["phase_weights"])
             if reasons:
                 # Keep slot-specific evidence for scoped squad players; target
                 # exclusions already appear in the baseline report.
@@ -77,6 +77,7 @@ def build_squad_depth(formation, assessment, benchmark=None, *, optimizer, polic
                 bench_slots.setdefault(key, []).append(sid)
             eligible.append({"player_id": key, "display_name": p["display_name"], "availability": p["availability"],
                              "loan_state": p["loan_state"], "baseline_slot": starter_slots.get(key),
+                             "eligibility_position": optimizer.qualifying_position(slot, evidence, policy),
                              "attribute_profile_score": evidence["attribute_profile_score"],
                              "assessment": evidence, "league": league_context(benchmark, context, context_reason, key, slot["profile"])})
         eligible.sort(key=lambda e: (-e["attribute_profile_score"], e["player_id"]))
