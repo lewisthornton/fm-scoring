@@ -1,0 +1,31 @@
+# Tactical selection audit and UI data contracts
+
+## Distinct meanings
+
+- `profile`: an existing fm27v2 weighted attribute-quality model, not an FM tactical role or a position. The weighted mean requires all positively weighted attributes; it is independent of familiarity. Keep the profile ID to join benchmark distributions, even if the UI labels the actual position separately.
+- `selection_position`: the single native FM position assigned to a slot. Eligibility policy 2 requires that code's observed rating or permitted category lower bound to reach the configured threshold (default 15). Other `positions` are contextual alternatives, not substitutes. Legacy formation files use the first entry; explicitly select another listed position if intended. Policy v1 settings are read but upgraded to v2 semantics. Formation hashes change with the normalized contract, and all reports use the same hash.
+- `ip.position` / `oop.position`: phase responsibilities, potentially different from each other and from the selection position. The default 4-3-3 has identical phase positions and no role labels; it is not a two-shape tactical analysis. The asymmetric example has distinct phase locations, e.g. RB selects at DR, IP DC, OOP DR. The weighted combined fit is position familiarity only; missing numeric evidence yields null, not zero. Low phase familiarity is a warning, not an additional hard gate. Role labels are descriptive, and `observed_role_suitability`/`suitability` remain null because no supported source provides observed role ratings.
+- Assignment objective: maximise cardinality, then the sum of eligible outfield attribute-profile means, then independent goalkeeper quality, then stable-ID tie-break. No phase familiarity, league percentile, win index or role fit is added. XI, depth and each signing simulation call the same eligibility predicate and solver.
+
+## Cross-profile comparability
+
+All weighted means lie on the same 1–20 attribute scale, but their marginal units are assumed comparable, not empirically calibrated to one another. Different normalised coefficients imply profile-specific means, variance and correlations in a real player population. In an invented vector where all attributes equal 10 except Jumping Reach = 20, the existing weights yield FB 10.323, CB 11.613, 6 10.323, wing 10.323, 10 10.571 and 9 11.316. The same attribute advantage is rewarded differently by design. With one player eligible for multiple slots, a change in profile-specific marginal advantage can change an optimal assignment; a constant offset per slot cancels for complete assignments, but scale differences (and offsets when different slots are vacant) need not cancel. This illustrates potential systematic differences, not observed bias in Rangers or an empirical assessment of match value.
+
+Preserve the current exact objective and model hash. League distributions are descriptive context; percentile ranks discard interval meaning, z-scores require comparable population/spread estimates, and neither establishes match impact. A calibrated alternative would require independent outcome data by position/role, comparable competition and tactical context, held-out validation and quantified uncertainty. Only then propose a separately versioned and approved objective; no such calibration is evidenced here.
+
+## Compact UI joins (no new persisted view model)
+
+Load the six sidecars from one successful bridge generation. Validate matching career/game date, `formation.sha256` (SHA-256 of canonical normalized formation JSON), `scoring_model.sha256` and effective `eligibility_policy` wherever present. Reject mismatched generations; `formation.json` has no career/date itself. `league_benchmarks.json` has its own extraction date, competition and season; a valid reference can be earlier than the observation date. Match model hash and observation date, retain unavailable reasons and warnings. No UI-derived scoring or eligibility calculations.
+
+| Report | Canonical data and keys |
+|---|---|
+| `formation.json` | ordered `slots`, unique `id`, selection/phase positions, labels, profile and phase weights |
+| `tactical_assessments.json` | `players[].player_id` (opaque career-scoped ID, never join by name); `position_evidence[code]`; `slots[]` keyed by `(player_id, slot_id)` for score and phase evidence |
+| `league_benchmarks.json` | `reference.profiles[profile]` distributions; `comparisons[]` by `(player_id, profile)`; competition/season/extraction provenance |
+| `optimal_xi.json` | canonical baseline assignment by `slot_id`, nullable `player_id`, score/totals and effective policy; embedded assessment is a copy of the canonical slot evidence |
+| `squad_depth.json` | `baseline` must equal XI; `coverage[]` keyed by slot, deputy IDs, eligible edge refs by `(slot_id, player_id)`; starter-loss scenarios by `removed_player_id`, ordered assignment refs and separate score/coverage deltas |
+| `signing_simulations.json` | baseline file refs and totals, candidate `player_id`, ordered assignment refs, changes and same-original-ID absences; scenario availability is assumed, not observed |
+
+Build read-only lookup maps once and keep references instead of duplicating nested observations. Display names are presentation only; namesakes and loan/transfer history cannot be merged by name. Scenario assignments reuse observed evidence with hypothetical availability overlays; never write overlays into the canonical assessment. Null is unknown or vacant depending on field, not zero. Use `classification`, `depth.status`, `evaluation_coverage` counts and `depth_limit` together: starting improvements are independent of depth evaluation, and `not_evaluated_limit` is unknown depth, never a negative result. A target with no eligible edge is not a completed depth evaluation. No output size reduction or dashboard redesign is undertaken here.
+
+Machine-readable source flags: `tactical_assessments.source_data` indicates potentially unscouted save-file attributes and unavailable role evidence. `signing_simulations.scenario_assumptions` explicitly records hypothetical availability and that interest, affordability, registration and fitness are not established. Preserve existing limitations and original financial units; no actual transfer decisions or fitness forecasts.
