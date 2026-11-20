@@ -412,7 +412,7 @@ def build_report(cache, people, career, observed_date, model_hash, profile_codes
                       "position_familiarity_not_confirmed" if fit != "confirmed" else
                       "insufficient_reference_sample" if distribution["status"] != "available" else None)
             report["comparisons"].append({
-                "player_id": person["player_id"], "profile": profile, "attribute_profile_score": score,
+                "player_id": person["player_id"], "profile": profile, "reference_population": "profile_group", "reference_position_codes": list(codes), "attribute_profile_score": score,
                 "position_familiarity": fit, "status": "unavailable" if reason else "available", "reason": reason,
                 "sample_size": distribution["sample_size"] if distribution else None,
                 "competition_id": report["competition"]["id"] if report["competition"] else None,
