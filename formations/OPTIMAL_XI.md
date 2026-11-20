@@ -4,13 +4,13 @@ The bridge publishes `optimal_xi.json` and `optimal_xi.html` alongside the exist
 
 ## Eligibility policy
 
-Default policy (version 1):
+Default policy (version 2):
 
 ```json
-{"version": 1, "minimum_familiarity": 15, "allow_category_evidence": true, "allow_unknown_availability": false}
+{"version": 2, "minimum_familiarity": 15, "allow_category_evidence": true, "allow_unknown_availability": false}
 ```
 
-Optional `--xi-policy path/to/policy.json` on the bridge overrides these settings. A partial object uses defaults; unknown fields or invalid values are rejected. Watch mode also monitors the policy file. No persistent player-data migration is required. A player must be in the active squad (overlap with target is fine), available, in the correct GK/outfield domain, have a complete weighted profile score and at least one accepted native position with an observed rating meeting the minimum or a category lower bound meeting it. Category evidence is never converted to a point rating. Target-only and unavailable players cannot be enabled by policy; unknown availability is excluded unless explicitly enabled and then flagged. Availability describes squad/loan status, not injury, suspension, fitness or registration eligibility.
+Optional `--xi-policy path/to/policy.json` on the bridge overrides these settings. A partial object uses defaults; unknown fields or invalid values are rejected. Version 1 settings are accepted and upgraded to strict version 2 semantics. Watch mode also monitors the policy file. No persistent player-data migration is required. A player must be in the active squad (overlap with target is fine), available, in the correct GK/outfield domain, have a complete weighted profile score and confirmed familiarity at the slot's single `selection_position` (observed rating or category lower bound meeting the minimum). The other accepted positions do not qualify the player for that slot. Category evidence is never converted to a point rating. Target-only and unavailable players cannot be enabled by policy; unknown availability is excluded unless explicitly enabled and then flagged. Availability describes squad/loan status, not injury, suspension, fitness or registration eligibility.
 
 IP and OOP positions are not eligibility gates. Their independent evidence and the combined positional fit are carried unchanged; low or unknown phase familiarity is flagged. Observed FM role suitability stays null. No new attributes, weighting or recruitment ranking is introduced.
 
