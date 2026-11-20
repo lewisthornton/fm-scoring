@@ -36,6 +36,7 @@ class SlotAssessment(TypedDict):
     label: str
     side: str
     profile: str
+    selection_position: str
     availability: Availability
     accepted_positions: dict[str, PositionEvidence]
     ip: PhaseAssessment
@@ -87,6 +88,8 @@ class AssessmentReport(TypedDict):
     position_fit_units: str
     attribute_profile_units: str
     observed_role_suitability_source: None
+    source_limitations: list[str]
+    source_data: dict[str, bool]
     players: list[PlayerAssessment]
 
 
@@ -186,6 +189,7 @@ def assess_player(formation, model, player, evidence, *, scorer) -> list[SlotAss
         slots.append({
             "player_id": player["player_id"], "slot_id": slot["id"], "label": slot["label"],
             "side": slot["side"], "profile": profile, "availability": player["availability"],
+            "selection_position": slot.get("selection_position", slot["positions"][0]),
             "accepted_positions": accepted, **phases,
             "attribute_profile_score": scores.get(profile), "attribute_profile_reason": score_reason,
             "missing_attributes": missing_attrs, "combined_position_fit": combined,
@@ -220,5 +224,7 @@ def build_assessments(formation, model, people, *, codes, scorer, career, format
         "position_fit_units": "FM position rating scale (1–20)",
         "attribute_profile_units": "weighted attribute mean (1–20)",
         "observed_role_suitability_source": None,
+        "source_limitations": ["Save-file attributes may include values hidden by in-game scouting knowledge.", "Role labels are configuration only; observed role suitability is unsupported.", "Phase familiarity is contextual, not the assignment objective."],
+        "source_data": {"may_include_unscouted_attributes": True, "observed_role_suitability_available": False},
         "players": players,
     }
