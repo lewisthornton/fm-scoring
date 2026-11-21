@@ -75,6 +75,53 @@ class LeagueBenchmarkTests(unittest.TestCase):
         self.assertEqual(sparse["native_profiles"]["10:mc"]["status"], "unavailable")
         self.assertIsNone(sparse["native_profiles"]["10:mc"]["median"])
         self.assertEqual(sparse["profiles"]["10"]["status"], "available")
+        self.assertEqual(sparse["native_profiles"]["10:mc"]["histogram"], [])
+        cache["reference"] = sparse
+        sparse_report = league.build_report(cache, [{"player_id": "invented", "raw": rows[0], "scores": {"10": 10}}], "career", "2027-01-01", "model", CODES, evidence)
+        mc = next(c for c in sparse_report["native_comparisons"] if c["profile"] == "10" and c["native_position"] == "mc")
+        self.assertEqual(mc["reason"], "insufficient_reference_sample")
+        self.assertIsNone(mc["percentile"])
+        self.assertIsNone(mc["difference_from_median"])
+        self.assertIsNotNone(next(c for c in sparse_report["comparisons"] if c["profile"] == "10")["percentile"])
+
+    def test_unavailable_broad_and_native_histograms_are_suppressed(self):
+        clubs = ["100", "101", "102", "103"]
+        cases = [("singleton", 1, 1, 0, {"insufficient_players", "insufficient_clubs"}),
+                 ("below_sample", 19, 4, 0, {"insufficient_players"}),
+                 ("below_clubs", 20, 3, 0, {"insufficient_clubs"}),
+                 ("below_coverage", 20, 4, 7, {"insufficient_attribute_coverage"})]
+        for name, n, contributing, missing, expected in cases:
+            with self.subTest(name=name):
+                rows = [reference_player(i+1, clubs[i % contributing], 12) for i in range(n+missing)]
+                for row in rows[n:]:
+                    del row["attrs"]["Pace"]
+                reference = aggregate(rows, clubs)
+                for distribution in (reference["profiles"]["CB"], reference["native_profiles"]["CB:dc"]):
+                    self.assertEqual(distribution["status"], "unavailable")
+                    self.assertEqual(set(distribution["reasons"]), expected)
+                    self.assertEqual(distribution["histogram"], [])
+                    self.assertEqual(distribution["sample_size"], n)
+                    self.assertEqual(distribution["contributing_clubs"], contributing)
+                    self.assertEqual(distribution["eligible_players"], n+missing)
+                    self.assertEqual(distribution["missing_attributes"], missing)
+                    self.assertAlmostEqual(distribution["attribute_coverage"], n/(n+missing))
+                    self.assertTrue(all(distribution[k] is None for k in ("median", "p25", "p75", "p90")))
+        available = aggregate([reference_player(i+1, clubs[i % 4], 12) for i in range(20)], clubs)
+        self.assertEqual(available["profiles"]["CB"]["histogram"], [[12, 20]])
+        self.assertEqual(available["native_profiles"]["CB:dc"]["histogram"], [[12, 20]])
+
+    def test_pre_suppression_cache_cannot_be_published_or_reused(self):
+        clubs = ["100", "101", "102", "103"]
+        rows = [reference_player(i+1, clubs[i % 4], 12) for i in range(20)]
+        reference = aggregate(rows, clubs)
+        reference["native_profiles"]["CB:dc"].update(status="unavailable", histogram=[[12, 1]])
+        detection = detect(competition_fixture())
+        cache = {"version": 1, "detection_policy": 4, "status": "available", "model_sha256": "model", "observed_game_date": "2027-01-01",
+                 "detection": detection, "extraction_game_date": "2027-01-01", "reference": reference, "provenance": {}}
+        report = league.build_report(cache, [], "career", "2027-01-01", "model", CODES, evidence)
+        self.assertEqual(report["reason"], "benchmark_detection_requires_refresh")
+        self.assertIsNone(report["reference"])
+        self.assertIsNone(league.reuse_reference(cache, detection, "model", "2027-01-01"))
     def test_preseason_33_roundless_reciprocal_fixtures_without_tables(self):
         clubs, comps, _, fixtures = competition_fixture(comp="33")
         # 11 opponents, three meetings each, 16 home and 17 away.
