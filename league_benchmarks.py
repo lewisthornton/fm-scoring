@@ -12,7 +12,7 @@ REFRESH_DAYS = 30
 SEASON_GRACE_DAYS = 31
 MIN_LEAGUE_SPAN_DAYS = 120
 MIN_FIXTURE_ONLY_SPAN_DAYS = 180
-DETECTION_POLICY = 4  # also invalidates caches without native-position reference populations
+DETECTION_POLICY = 5  # invalidate caches that may expose unavailable reference histograms
 
 
 def identifier(value):
@@ -341,7 +341,7 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
             "p25": quantile(values, 0.25) if not reasons else None,
             "p75": quantile(values, 0.75) if not reasons else None,
             "p90": quantile(values, 0.9) if not reasons else None,
-            "histogram": [[value, frequency] for value, frequency in sorted(Counter(values).items())],
+            "histogram": [[value, frequency] for value, frequency in sorted(Counter(values).items())] if not reasons else [],
             "warnings": [warning for condition, warning in (
                 (count["unknown_type"] > 0, "unknown_player_type_excluded"),
                 (count["unknown"] > 0, "unknown_familiarity_excluded"),
