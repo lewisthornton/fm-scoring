@@ -20,6 +20,7 @@ id = "lb"
 label = "Attacking left-back"
 side = "left"
 positions = ["dl", "wbl"]
+selection_position = "dl"
 profile = "FB"
 ip = { position = "wbl", role = "Overlap and cross" }
 oop = { position = "dl", role = "Recover to back four" }
@@ -35,6 +36,9 @@ IDs, labels and responsibilities despite using the same scoring profile.
   the existing native FM codes:
   `gk, sw, dl, dc, dr, dm, ml, mc, mr, aml, amc, amr, stc, wbl, wbr`.
   The striker code is `stc` (displayed as ST in the native dashboard).
+  `selection_position` is the single native position being assigned and must
+  occur in `positions`. Legacy TOML omitting it uses the first listed position.
+  Other listed positions supply context, not an eligibility substitute.
 - `profile` references the selected model's existing `GK`, `FB`, `CB`,
   `6`, `wing`, `10` or `9` scoring profile. No weights are defined here.
 - The optional `ip` and `oop` tables each require a native FM `position` and
@@ -45,7 +49,8 @@ IDs, labels and responsibilities despite using the same scoring profile.
   responsibilities unknown; omitting a role leaves the role label unknown.
 - Phase weights are finite nonnegative numbers with a finite positive total.
   They are preserved as configured (they do not need to sum to one).
-  They are reserved for future use; no weighted phase score is calculated.
+  They determine the combined positional familiarity when both weighted
+  phase positions have observed numeric ratings, not the XI objective.
 
 Unknown fields, invalid values, malformed roles, duplicate IDs, unsupported
 versions and invalid slot counts are rejected before publishing new output.
@@ -73,7 +78,8 @@ positional score is a separate weighted attribute score. Existing recruitment
 and native dashboard HTML remains unchanged for either formation. The separate
 [tactical assessment contract](ASSESSMENTS.md) exposes position-based fit and
 attribute scores per player and slot. No player assignment or FM role suitability
-inference takes place.
+inference takes place in the formation loader; the separate XI optimiser
+uses the validated selection position and attribute profile score.
 
 In Python, `formation.load_formation(path, model)` loads TOML and returns a
 JSON-ready dictionary. `formation.validate_formation(config, profiles)` validates

@@ -13,7 +13,7 @@ The bridge publishes `signing_simulations.json` and `signing_simulations.html` i
 - `completeness_upgrade`: at least one more filled slot, before any score comparison. A newly filled GK has no pre-signing GK score difference (null).
 - `starting_upgrade`: unchanged cardinality and strictly better numeric lexicographic XI objective. Outfield and goalkeeper scores are separate; a tie-only reassignment is not a starting upgrade.
 - `depth_improvement`: no numeric XI improvement but evaluated depth improves at least one supported measure: direct count, independent cover, shared-pair or overall distinct bench capacity, relieved sole-cover dependency, or same-player absence objective.
-- `depth_not_evaluated`: eligible edges exist and XI objective did not improve, but detailed depth was outside the explicit limit. Not a negative recommendation or a completed depth result.
+- `depth_not_evaluated`: eligible edges exist and XI objective did not improve, but detailed depth was outside the explicit limit. Not a negative recommendation or a completed depth result. Starting upgrades can also have `depth.status=not_evaluated_limit`; `evaluation_coverage` counts both evaluation states and classifications independently.
 - `no_demonstrated_improvement`: no eligible edge with sufficient known evidence, or no supported improvement after evaluation. This is not a claim the player has no footballing value.
 - `insufficient_evidence`: no eligible edge and missing compatible profile or familiarity evidence.
 - `already_in_squad`: not a signing candidate.

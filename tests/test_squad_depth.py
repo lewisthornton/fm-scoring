@@ -30,6 +30,15 @@ def scenario(result, player):
 
 
 class SquadDepthTests(unittest.TestCase):
+    def test_phase_gate_and_relaxed_cover_use_same_predicate(self):
+        people = eleven(ASYM) + [person("reserve-rb", ["wbr"], score=10)]
+        strict = report(people, ASYM)
+        relaxed = report(people, ASYM, policy={"mode": "relaxed"})
+        self.assertNotIn("reserve-rb", coverage(strict, "rb")["direct_deputy_ids"])
+        self.assertIn("reserve-rb", coverage(relaxed, "rb")["direct_deputy_ids"])
+        gated = report(people, ASYM, policy={"mode": "relaxed", "phase_eligibility": "require_weighted_phases"})
+        self.assertNotIn("reserve-rb", coverage(gated, "rb")["direct_deputy_ids"])
+        self.assertEqual(gated["eligibility_policy"], gated["baseline"]["eligibility_policy"])
     def test_complete_with_direct_replacements_and_distinct_cbs(self):
         people = eleven(DEFAULT) + [person("reserve-" + s["id"], [s["positions"][0]], score=10,
                                           keeper=s["profile"] == "GK") for s in DEFAULT["slots"]]
