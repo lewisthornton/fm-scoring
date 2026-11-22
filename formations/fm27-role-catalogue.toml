@@ -1,0 +1,810 @@
+# Based on Napas/fm-mcp at 4f19a3f0d1130e47d604173a78ff01642f538d52; see THIRD_PARTY_ROLE_ABILITY.md.
+version = 1
+id = "fm27-reference-2700"
+origin = "fm27_reference"
+source = "Napas/fm-mcp role classifiers, names and offered-role masks; context restrictions are conservative interpretations"
+source_revision = "4f19a3f0d1130e47d604173a78ff01642f538d52"
+model_version = "fm27-role-ability-r3-v1"
+
+[[roles]]
+id = "ip.goalkeeper"
+label = "Goalkeeper"
+role_bit = 0x1
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","positioning","reflexes","agility","concentration"]
+preferable_attributes = ["kicking","throwing","anticipation","decisions","one_on_ones"]
+negative_attributes = ["eccentricity"]
+
+[[roles]]
+id = "ip.centre_back"
+label = "Centre-Back"
+role_bit = 0x2
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach"]
+preferable_attributes = ["decisions","pace","bravery","aggression","composure","concentration"]
+negative_attributes = ["passing"]
+
+[[roles]]
+id = "ip.full_back"
+label = "Full-Back"
+role_bit = 0x4
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","positioning","teamwork","acceleration","concentration"]
+preferable_attributes = ["crossing","dribbling","passing","decisions","technique","work_rate","stamina","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wing_back"
+label = "Wing-Back"
+role_bit = 0x8
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}, {position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["crossing","marking","tackling","teamwork","work_rate","acceleration","stamina","pace"]
+preferable_attributes = ["dribbling","off_the_ball","passing","anticipation","decisions","positioning","first_touch","technique","balance","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.defensive_midfielder"
+label = "Defensive Midfielder"
+role_bit = 0x10
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["tackling","anticipation","positioning","teamwork","concentration"]
+preferable_attributes = ["marking","passing","decisions","first_touch","work_rate","strength","stamina","aggression","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.central_midfielder"
+label = "Central Midfielder"
+role_bit = 0x20
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}]
+key_attributes = ["passing","tackling","decisions","first_touch","teamwork"]
+preferable_attributes = ["off_the_ball","vision","anticipation","positioning","technique","work_rate","stamina","composure","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wide_midfielder"
+label = "Wide Midfielder"
+role_bit = 0x40
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}]
+key_attributes = ["crossing","passing","decisions","technique","teamwork","work_rate","stamina","pace"]
+preferable_attributes = ["dribbling","off_the_ball","vision","anticipation","first_touch","acceleration","agility","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.winger"
+label = "Winger"
+role_bit = 0x80
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}, {position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["crossing","dribbling","technique","teamwork","acceleration","pace","agility"]
+preferable_attributes = ["off_the_ball","passing","anticipation","first_touch","flair","work_rate","stamina","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.attacking_midfielder"
+label = "Attacking Midfielder"
+role_bit = 0x200
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}, {position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["long_shots","off_the_ball","passing","first_touch","technique","flair","composure"]
+preferable_attributes = ["crossing","dribbling","finishing","vision","anticipation","decisions","acceleration","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.deep_lying_forward"
+label = "Deep Lying Forward"
+role_bit = 0x400
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["finishing","off_the_ball","first_touch","technique","strength","composure"]
+preferable_attributes = ["dribbling","passing","vision","anticipation","decisions","teamwork","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.centre_forward"
+label = "Centre-Forward"
+role_bit = 0x800
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["finishing","heading","off_the_ball","first_touch","technique","acceleration","strength","composure"]
+preferable_attributes = ["dribbling","passing","anticipation","decisions","pace","jumping_reach","balance","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.ball_playing_goalkeeper"
+label = "Ball-Playing Goalkeeper"
+role_bit = 0x1000
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","kicking","positioning","reflexes","agility","concentration"]
+preferable_attributes = ["passing","throwing","anticipation","decisions","one_on_ones","eccentricity","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.advanced_centre_back"
+label = "Advanced Centre-Back"
+role_bit = 0x4000
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","passing","tackling","anticipation","decisions","positioning","technique","teamwork","strength","jumping_reach","composure"]
+preferable_attributes = ["dribbling","vision","first_touch","stamina","pace","bravery","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.deep_lying_playmaker"
+label = "Deep Lying Playmaker"
+role_bit = 0x8000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["passing","vision","decisions","first_touch","technique","teamwork","composure"]
+preferable_attributes = ["marking","off_the_ball","tackling","anticipation","positioning","work_rate","stamina","balance","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.box_to_box_midfielder"
+label = "Box To Box Midfielder"
+role_bit = 0x10000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "right"}]
+key_attributes = ["off_the_ball","passing","tackling","teamwork","work_rate","stamina"]
+preferable_attributes = ["dribbling","finishing","long_shots","anticipation","decisions","positioning","first_touch","technique","acceleration","strength","pace","balance","aggression","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.advanced_playmaker"
+label = "Advanced Playmaker"
+role_bit = 0x20000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}, {position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["off_the_ball","passing","vision","decisions","first_touch","technique","teamwork","composure"]
+preferable_attributes = ["crossing","dribbling","anticipation","flair","acceleration","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.target_forward"
+label = "Target Forward"
+role_bit = 0x40000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["finishing","heading","off_the_ball","strength","jumping_reach","balance","bravery","aggression","composure"]
+preferable_attributes = ["anticipation","decisions","first_touch","teamwork"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.poacher"
+label = "Poacher"
+role_bit = 0x80000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["finishing","heading","off_the_ball","anticipation","acceleration","composure","concentration"]
+preferable_attributes = ["decisions","first_touch","technique","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.complete_forward"
+label = "Complete Forward"
+role_bit = 0x100000
+placements = []
+key_attributes = ["dribbling","finishing","heading","off_the_ball","anticipation","first_touch","technique","acceleration","strength","agility","composure"]
+preferable_attributes = ["long_shots","passing","vision","decisions","teamwork","work_rate","stamina","pace","jumping_reach","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.ball_playing_centre_back"
+label = "Ball-Playing Centre-Back"
+role_bit = 0x1000000
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","passing","tackling","anticipation","positioning","strength","jumping_reach","composure"]
+preferable_attributes = ["vision","decisions","first_touch","technique","pace","bravery","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.inside_forward"
+label = "Inside Forward"
+role_bit = 0x8000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["dribbling","off_the_ball","anticipation","first_touch","technique","acceleration","agility","composure"]
+preferable_attributes = ["crossing","finishing","long_shots","passing","vision","flair","work_rate","stamina","pace","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.ball_winning_midfielder"
+label = "Ball Winning Midfielder"
+role_bit = 0x10000000
+placements = []
+key_attributes = ["tackling","anticipation","teamwork","work_rate","stamina","aggression"]
+preferable_attributes = ["marking","positioning","strength","pace","bravery","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.no_nonsense_centre_back"
+label = "No-Nonsense Centre-Back"
+role_bit = 0x20000000
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach"]
+preferable_attributes = ["pace","bravery","aggression","concentration"]
+negative_attributes = ["passing","composure"]
+
+[[roles]]
+id = "ip.defensive_winger"
+label = "Defensive Winger"
+role_bit = 0x40000000
+placements = []
+key_attributes = ["crossing","off_the_ball","technique","teamwork","work_rate","stamina"]
+preferable_attributes = ["dribbling","marking","passing","tackling","anticipation","decisions","positioning","first_touch","acceleration","aggression","composure","concentration"]
+negative_attributes = ["vision","flair"]
+
+[[roles]]
+id = "ip.channel_forward"
+label = "Channel Forward"
+role_bit = 0x80000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["dribbling","finishing","off_the_ball","first_touch","technique","work_rate","acceleration","composure"]
+preferable_attributes = ["crossing","heading","passing","anticipation","decisions","stamina","pace","balance","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.free_role"
+label = "Free Role"
+role_bit = 0x100000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["dribbling","long_shots","off_the_ball","passing","vision","first_touch","technique","flair","composure"]
+preferable_attributes = ["crossing","finishing","anticipation","decisions","acceleration","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.anchor"
+label = "Anchor"
+role_bit = 0x200000000
+placements = []
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","concentration"]
+preferable_attributes = ["teamwork","strength","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.half_back"
+label = "Half Back"
+role_bit = 0x800000000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","teamwork","strength","jumping_reach","concentration"]
+preferable_attributes = ["passing","decisions","first_touch","work_rate","stamina","bravery","aggression","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.no_nonsense_full_back"
+label = "No-Nonsense Full-Back"
+role_bit = 0x1000000000
+placements = []
+key_attributes = ["marking","tackling","anticipation","positioning","strength"]
+preferable_attributes = ["heading","teamwork","bravery","aggression","concentration"]
+negative_attributes = ["dribbling","passing","technique","pace"]
+
+[[roles]]
+id = "ip.enganche"
+label = "Enganche"
+role_bit = 0x2000000000
+placements = []
+key_attributes = ["passing","vision","decisions","first_touch","technique","composure"]
+preferable_attributes = ["dribbling","off_the_ball","anticipation","flair","teamwork","agility"]
+negative_attributes = ["work_rate"]
+
+[[roles]]
+id = "ip.advanced_wing_back"
+label = "Advanced Wing-Back"
+role_bit = 0x4000000000
+placements = [{position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["crossing","dribbling","off_the_ball","technique","teamwork","work_rate","acceleration","stamina","pace","agility"]
+preferable_attributes = ["marking","passing","tackling","anticipation","decisions","positioning","first_touch","flair","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.regista"
+label = "Regista"
+role_bit = 0x8000000000
+placements = []
+key_attributes = ["off_the_ball","passing","vision","decisions","first_touch","technique","flair","teamwork","composure"]
+preferable_attributes = ["dribbling","long_shots","anticipation","balance"]
+negative_attributes = ["positioning"]
+
+[[roles]]
+id = "ip.false_nine"
+label = "False Nine"
+role_bit = 0x10000000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["dribbling","off_the_ball","passing","vision","decisions","first_touch","technique","teamwork","acceleration","composure"]
+preferable_attributes = ["finishing","anticipation","flair","balance","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.second_striker"
+label = "Second Striker"
+role_bit = 0x20000000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["finishing","off_the_ball","anticipation","first_touch","acceleration","composure"]
+preferable_attributes = ["dribbling","long_shots","passing","decisions","technique","work_rate","stamina","pace","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wide_target_forward"
+label = "Wide Target Forward"
+role_bit = 0x40000000000
+placements = []
+key_attributes = ["heading","off_the_ball","strength","jumping_reach","bravery"]
+preferable_attributes = ["crossing","finishing","anticipation","first_touch","teamwork","work_rate","stamina","balance"]
+negative_attributes = ["dribbling","vision","flair"]
+
+[[roles]]
+id = "ip.playmaking_winger"
+label = "Playmaking Winger"
+role_bit = 0x80000000000
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}, {position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["crossing","dribbling","off_the_ball","passing","vision","decisions","first_touch","technique","teamwork","acceleration","composure"]
+preferable_attributes = ["anticipation","flair","work_rate","stamina","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.inside_wing_back"
+label = "Inside Wing-Back"
+role_bit = 0x100000000000
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}, {position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["passing","tackling","anticipation","decisions","positioning","teamwork","acceleration","composure"]
+preferable_attributes = ["marking","first_touch","technique","work_rate","stamina","pace","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wide_forward"
+label = "Wide Forward"
+role_bit = 0x200000000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["dribbling","off_the_ball","anticipation","first_touch","technique","acceleration","pace","agility"]
+preferable_attributes = ["crossing","finishing","passing","flair","work_rate","stamina","balance","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.box_to_box_playmaker"
+label = "Box To Box Playmaker"
+role_bit = 0x400000000000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "right"}]
+key_attributes = ["off_the_ball","passing","vision","decisions","first_touch","technique","teamwork","work_rate","stamina","composure"]
+preferable_attributes = ["dribbling","long_shots","marking","tackling","anticipation","positioning","acceleration","pace","balance","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.mezzala"
+label = "Mezzala"
+role_bit = 0x800000000000
+placements = []
+key_attributes = ["dribbling","off_the_ball","passing","vision","decisions","technique","work_rate","acceleration"]
+preferable_attributes = ["finishing","long_shots","anticipation","first_touch","flair","stamina","balance","composure"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wide_central_midfielder"
+label = "Wide Central Midfielder"
+role_bit = 0x1000000000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "right"}]
+key_attributes = ["passing","tackling","decisions","first_touch","teamwork"]
+preferable_attributes = ["crossing","dribbling","off_the_ball","vision","anticipation","positioning","technique","work_rate","stamina","agility","composure","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.inside_winger"
+label = "Inside Winger"
+role_bit = 0x2000000000000
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}, {position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["dribbling","first_touch","technique","teamwork","acceleration","agility","composure"]
+preferable_attributes = ["crossing","long_shots","off_the_ball","passing","vision","anticipation","flair","work_rate","stamina","pace","balance"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.segundo_volante"
+label = "Segundo Volante"
+role_bit = 0x4000000000000
+placements = []
+key_attributes = ["marking","off_the_ball","passing","tackling","positioning","work_rate","stamina","pace"]
+preferable_attributes = ["finishing","long_shots","anticipation","decisions","first_touch","acceleration","strength","balance","composure","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.wide_centre_back"
+label = "Wide Centre-Back"
+role_bit = 0x8000000000000
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach"]
+preferable_attributes = ["dribbling","decisions","work_rate","acceleration","stamina","pace","bravery","aggression","agility","composure","concentration"]
+negative_attributes = ["passing"]
+min_centre_backs = 3
+
+[[roles]]
+id = "ip.inside_full_back"
+label = "Inside Full-Back"
+role_bit = 0x10000000000000
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength"]
+preferable_attributes = ["dribbling","decisions","work_rate","acceleration","stamina","pace","jumping_reach","bravery","aggression","agility","composure","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.no_nonsense_goalkeeper"
+label = "No Nonsense Goalkeeper"
+role_bit = 0x20000000000000
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","positioning","reflexes","agility","concentration"]
+preferable_attributes = ["anticipation","decisions","one_on_ones"]
+negative_attributes = ["passing","eccentricity"]
+
+[[roles]]
+id = "ip.overlapping_centre_back"
+label = "Overlapping Centre-Back"
+role_bit = 0x40000000000000
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}]
+key_attributes = ["crossing","heading","marking","tackling","anticipation","work_rate","strength","stamina","pace","jumping_reach"]
+preferable_attributes = ["dribbling","off_the_ball","decisions","positioning","technique","acceleration","bravery","aggression","agility","composure","concentration"]
+negative_attributes = []
+min_centre_backs = 3
+
+[[roles]]
+id = "ip.playmaking_wing_back"
+label = "Playmaking Wing-Back"
+role_bit = 0x80000000000000
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}, {position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["passing","tackling","vision","decisions","first_touch","technique","teamwork","acceleration","composure"]
+preferable_attributes = ["crossing","dribbling","marking","off_the_ball","anticipation","positioning","work_rate","stamina","pace","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.channel_midfielder"
+label = "Channel Midfielder"
+role_bit = 0x100000000000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}, {position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["crossing","off_the_ball","passing","first_touch","technique","work_rate","acceleration","composure"]
+preferable_attributes = ["dribbling","long_shots","vision","anticipation","decisions","flair","stamina","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "ip.midfield_playmaker"
+label = "Midfield Playmaker"
+role_bit = 0x200000000000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}]
+key_attributes = ["off_the_ball","passing","vision","decisions","first_touch","technique","teamwork","composure"]
+preferable_attributes = ["dribbling","tackling","anticipation","positioning","flair","work_rate","stamina","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.goalkeeper"
+label = "Goalkeeper"
+role_bit = 0x1
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","positioning","reflexes","agility","concentration"]
+preferable_attributes = ["anticipation","decisions","one_on_ones","rushing_out"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.sweeper_keeper"
+label = "Sweeper Keeper"
+role_bit = 0x2
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","anticipation","decisions","one_on_ones","reflexes","rushing_out","agility"]
+preferable_attributes = ["positioning","eccentricity","acceleration","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.line_holding_goalkeeper"
+label = "Line-Holding Goalkeeper"
+role_bit = 0x4
+placements = [{position = "gk", side = "centre"}]
+key_attributes = ["handling","aerial_reach","command_of_area","communication","positioning","reflexes","agility","concentration"]
+preferable_attributes = ["anticipation","decisions","one_on_ones"]
+negative_attributes = ["rushing_out"]
+
+[[roles]]
+id = "oop.centre_back"
+label = "Centre-Back"
+role_bit = 0x8
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach"]
+preferable_attributes = ["decisions","pace","bravery","aggression","composure","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.stopping_centre_back"
+label = "Stopping Centre-Back"
+role_bit = 0x10
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach","bravery","aggression"]
+preferable_attributes = ["decisions","pace","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.covering_centre_back"
+label = "Covering Centre-Back"
+role_bit = 0x20
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","decisions","positioning","strength","pace","jumping_reach","concentration"]
+preferable_attributes = ["acceleration","bravery"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.wide_centre_back"
+label = "Wide Centre-Back"
+role_bit = 0x40
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach"]
+preferable_attributes = ["decisions","acceleration","pace","bravery","aggression","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.stopping_wide_centre_back"
+label = "Stopping Wide Centre-Back"
+role_bit = 0x80
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","positioning","strength","jumping_reach","bravery","aggression"]
+preferable_attributes = ["decisions","acceleration","pace","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.covering_wide_centre_back"
+label = "Covering Wide Centre-Back"
+role_bit = 0x100
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}]
+key_attributes = ["heading","marking","tackling","anticipation","decisions","positioning","strength","pace","jumping_reach","concentration"]
+preferable_attributes = ["acceleration","bravery","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.full_back"
+label = "Full-Back"
+role_bit = 0x200
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","positioning","teamwork","acceleration"]
+preferable_attributes = ["decisions","work_rate","stamina","pace","aggression","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.pressing_full_back"
+label = "Pressing Full-Back"
+role_bit = 0x400
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","positioning","teamwork","work_rate","acceleration","aggression"]
+preferable_attributes = ["decisions","stamina","pace","bravery","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.holding_full_back"
+label = "Holding Full-Back"
+role_bit = 0x800
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","acceleration","concentration"]
+preferable_attributes = ["teamwork","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.wing_back"
+label = "Wing-Back"
+role_bit = 0x1000
+placements = [{position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","positioning","teamwork","acceleration","stamina"]
+preferable_attributes = ["decisions","work_rate","pace","aggression","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.pressing_wing_back"
+label = "Pressing Wing-Back"
+role_bit = 0x2000
+placements = [{position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","positioning","teamwork","work_rate","acceleration","stamina","aggression"]
+preferable_attributes = ["decisions","pace","bravery","agility","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.holding_wing_back"
+label = "Holding Wing-Back"
+role_bit = 0x4000
+placements = [{position = "wbl", side = "left"}, {position = "wbr", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","acceleration","concentration"]
+preferable_attributes = ["teamwork","stamina","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.defensive_midfielder"
+label = "Defensive Midfielder"
+role_bit = 0x8000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["tackling","anticipation","decisions","positioning","teamwork","work_rate"]
+preferable_attributes = ["marking","strength","stamina","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.dropping_defensive_midfielder"
+label = "Dropping Defensive Midfielder"
+role_bit = 0x10000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","teamwork","work_rate","strength","jumping_reach","concentration"]
+preferable_attributes = ["stamina","aggression"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.pressing_defensive_midfielder"
+label = "Pressing Defensive Midfielder"
+role_bit = 0x20000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["tackling","anticipation","decisions","positioning","teamwork","work_rate","stamina","aggression"]
+preferable_attributes = ["marking","strength","pace","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.screening_defensive_midfielder"
+label = "Screening Defensive Midfielder"
+role_bit = 0x40000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "centre"}, {position = "dm", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","concentration"]
+preferable_attributes = ["teamwork","work_rate","strength","stamina"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.wide_covering_defensive_midfielder"
+label = "Wide Covering Defensive Midfielder"
+role_bit = 0x80000
+placements = [{position = "dm", side = "left"}, {position = "dm", side = "right"}]
+key_attributes = ["marking","tackling","anticipation","decisions","positioning","teamwork","work_rate","stamina","agility"]
+preferable_attributes = ["strength","pace","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.central_midfielder"
+label = "Central Midfielder"
+role_bit = 0x100000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}]
+key_attributes = ["tackling","decisions","teamwork","work_rate"]
+preferable_attributes = ["marking","anticipation","positioning","stamina","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.pressing_central_midfielder"
+label = "Pressing Central Midfielder"
+role_bit = 0x8000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}]
+key_attributes = ["tackling","anticipation","decisions","teamwork","work_rate","stamina","aggression"]
+preferable_attributes = ["marking","positioning","strength","pace","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.screening_central_midfielder"
+label = "Screening Central Midfielder"
+role_bit = 0x10000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "centre"}, {position = "mc", side = "right"}]
+key_attributes = ["marking","tackling","decisions","positioning","concentration"]
+preferable_attributes = ["anticipation","teamwork","work_rate","stamina"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.wide_covering_central_midfielder"
+label = "Wide Covering Central Midfielder"
+role_bit = 0x20000000
+placements = [{position = "mc", side = "left"}, {position = "mc", side = "right"}]
+key_attributes = ["marking","tackling","decisions","teamwork","work_rate","stamina","agility"]
+preferable_attributes = ["anticipation","positioning","pace","aggression","concentration"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.attacking_midfielder"
+label = "Attacking Midfielder"
+role_bit = 0x40000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["anticipation","decisions","work_rate"]
+preferable_attributes = ["marking","off_the_ball","teamwork","stamina","aggression"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.tracking_attacking_midfielder"
+label = "Tracking Attacking Midfielder"
+role_bit = 0x80000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["anticipation","decisions","teamwork","work_rate","stamina","aggression"]
+preferable_attributes = ["marking","off_the_ball","positioning"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.central_outlet_midfielder"
+label = "Central Outlet Midfielder"
+role_bit = 0x100000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "centre"}, {position = "amc", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","balance","concentration"]
+preferable_attributes = ["marking","first_touch","strength","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.splitting_outlet_attacking_midfielder"
+label = "Splitting Outlet Attacking Midfielder"
+role_bit = 0x200000000
+placements = [{position = "amc", side = "left"}, {position = "amc", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","pace","concentration"]
+preferable_attributes = ["marking","first_touch","acceleration","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.wide_midfielder"
+label = "Wide Midfielder"
+role_bit = 0x800000000
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}]
+key_attributes = ["decisions","teamwork","work_rate","acceleration"]
+preferable_attributes = ["marking","off_the_ball","anticipation","stamina","pace","aggression","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.tracking_wide_midfielder"
+label = "Tracking Wide Midfielder"
+role_bit = 0x1000000000
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}]
+key_attributes = ["anticipation","decisions","teamwork","work_rate","acceleration","stamina","aggression"]
+preferable_attributes = ["marking","off_the_ball","tackling","positioning","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.wide_outlet_wide_midfielder"
+label = "Wide Outlet Wide Midfielder"
+role_bit = 0x2000000000
+placements = [{position = "ml", side = "left"}, {position = "mr", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","pace","concentration"]
+preferable_attributes = ["dribbling","marking","first_touch","acceleration","agility","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.winger"
+label = "Winger"
+role_bit = 0x4000000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["anticipation","decisions","teamwork","work_rate","acceleration"]
+preferable_attributes = ["marking","off_the_ball","stamina","pace","aggression","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.tracking_winger"
+label = "Tracking Winger"
+role_bit = 0x8000000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["anticipation","decisions","teamwork","work_rate","acceleration","stamina","aggression"]
+preferable_attributes = ["marking","off_the_ball","tackling","positioning","pace","agility"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.inside_outlet_winger"
+label = "Inside Outlet Winger"
+role_bit = 0x10000000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","balance","concentration"]
+preferable_attributes = ["dribbling","marking","first_touch","acceleration","strength","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.wide_outlet_winger"
+label = "Wide Outlet Winger"
+role_bit = 0x20000000000
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","pace","concentration"]
+preferable_attributes = ["dribbling","marking","first_touch","acceleration","agility","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.centre_forward"
+label = "Centre-Forward"
+role_bit = 0x40000000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["anticipation","decisions","work_rate"]
+preferable_attributes = ["marking","off_the_ball","teamwork","stamina","aggression"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.tracking_centre_forward"
+label = "Tracking Centre-Forward"
+role_bit = 0x80000000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["anticipation","decisions","teamwork","work_rate","stamina","aggression"]
+preferable_attributes = ["marking","off_the_ball","positioning"]
+negative_attributes = []
+
+[[roles]]
+id = "oop.central_outlet_centre_forward"
+label = "Central Outlet Centre-Forward"
+role_bit = 0x100000000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "centre"}, {position = "stc", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","balance","concentration"]
+preferable_attributes = ["marking","first_touch","strength","composure"]
+negative_attributes = ["work_rate","stamina"]
+
+[[roles]]
+id = "oop.splitting_outlet_centre_forward"
+label = "Splitting Outlet Centre-Forward"
+role_bit = 0x200000000000
+placements = [{position = "stc", side = "left"}, {position = "stc", side = "right"}]
+key_attributes = ["off_the_ball","anticipation","decisions","teamwork","pace","concentration"]
+preferable_attributes = ["marking","first_touch","acceleration","composure"]
+negative_attributes = ["work_rate","stamina"]
