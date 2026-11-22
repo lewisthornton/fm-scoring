@@ -66,28 +66,36 @@ def side_allowed(position, side):
 
 
 def validate_catalogue(config):
-    """Normalize a synthetic catalogue; placements are exact position/side pairs.
+    """Normalize a synthetic or reference-derived catalogue.
 
-    An optional phase-local DC count constraint models formation context without
-    assuming any real FM role restrictions. No weights or attributes are allowed.
+    An optional phase-local DC count constraint models formation context.
+    Reference rows additionally carry pinned classifier bits and attribute
+    classes; a synthetic row cannot contain these numerical fields.
     """
-    formation.table(config, "catalogue", ("version", "id", "origin", "source", "roles"))
+    real = isinstance(config, dict) and config.get("origin") == "fm27_reference"
+    provenance = ("source_revision", "model_version") if real else ()
+    formation.table(config, "catalogue", ("version", "id", "origin", "source", "roles", *provenance))
     version(config["version"], 1, "catalogue.version")
     identifier(config["id"], "catalogue.id")
-    if config["origin"] != "synthetic":
-        raise ValueError("R2 catalogue.origin: only synthetic definitions are supported")
+    if config["origin"] not in ("synthetic", "fm27_reference"):
+        raise ValueError("Unsupported catalogue origin")
+    if real:
+        if not isinstance(config["source_revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", config["source_revision"]):
+            raise ValueError("Invalid source revision")
+        identifier(config["model_version"], "catalogue.model_version")
     source = formation.text(config["source"], "catalogue.source")
     if not isinstance(config["roles"], list) or not config["roles"]:
         raise ValueError("catalogue.roles: expected nonempty role array")
-    roles = {}
+    roles, bits = {}, set()
     for row in config["roles"]:
-        formation.table(row, "role", ("id", "label", "placements"), ("min_centre_backs", "max_centre_backs"))
+        numerical = ("role_bit", "key_attributes", "preferable_attributes", "negative_attributes") if real else ()
+        formation.table(row, "role", ("id", "label", "placements", *numerical), ("min_centre_backs", "max_centre_backs"))
         key = row["id"]
         if not isinstance(key, str) or not re.fullmatch(r"(?:ip|oop)\.[a-z][a-z0-9_-]*", key):
             raise ValueError("role.id: expected ip.<id> or oop.<id>")
         if key in roles:
             raise ValueError(f"duplicate role ID {key}")
-        if not isinstance(row["placements"], list) or not row["placements"]:
+        if not isinstance(row["placements"], list) or (not real and not row["placements"]):
             raise ValueError(f"{key}: expected nonempty placements")
         placements = set()
         for place in row["placements"]:
@@ -103,7 +111,27 @@ def validate_catalogue(config):
         roles[key] = {"label": formation.text(row["label"], key + ".label"),
                       "placements": [{"position": p, "side": s} for p, s in sorted(placements)],
                       "min_centre_backs": lo, "max_centre_backs": hi}
-    return {"version": 1, "id": config["id"], "origin": "synthetic", "source": source, "roles": roles}
+        if real:
+            bit = row["role_bit"]
+            phased_bit = (key.split(".")[0], bit) if type(bit) is int else None
+            if type(bit) is not int or not 0 < bit < 2**64 or bit & (bit - 1) or phased_bit in bits:
+                raise ValueError(f"{key}: invalid or duplicate reference role bit")
+            bits.add(phased_bit)
+            roles[key]["role_bit"] = bit
+            seen = set()
+            for group in numerical[1:]:
+                attrs = row[group]
+                if not isinstance(attrs, list) or (group == "key_attributes" and not attrs):
+                    raise ValueError(f"{key}: invalid attribute class {group}")
+                for attr in attrs:
+                    if not isinstance(attr, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", attr) or attr in seen:
+                        raise ValueError(f"{key}: invalid or duplicate attribute {attr!r}")
+                    seen.add(attr)
+                roles[key][group] = sorted(attrs)
+    result = {"version": 1, "id": config["id"], "origin": config["origin"], "source": source, "roles": roles}
+    if real:
+        result.update({k: config[k] for k in provenance})
+    return result
 
 
 def load_catalogue(path):
