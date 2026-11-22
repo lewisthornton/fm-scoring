@@ -1,5 +1,10 @@
 # R2: tactic-driven role configuration (version 2)
 
+Later milestone: [R3](ROLE_ABILITY_R3.md) adds an independently usable,
+reference-derived catalogue and pure numerical library. The synthetic R2
+catalogue and operational v1 scorer remain unchanged. The R2-specific scope
+and restrictions below describe the original structural milestone.
+
 This is a separate, experimental configuration contract. It is **not** an FM27
 role catalogue or role-ability implementation. All identifiers, labels and
 restrictions in `synthetic-role-catalogue.toml` are invented for structural
