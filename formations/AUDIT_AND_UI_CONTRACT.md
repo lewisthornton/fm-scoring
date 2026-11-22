@@ -21,7 +21,7 @@ Load the six sidecars from one successful bridge generation. Validate matching c
 |---|---|
 | `formation.json` | ordered `slots`, unique `id`, selection/phase positions, labels, profile and phase weights |
 | `tactical_assessments.json` | `players[].player_id` (opaque career-scoped ID, never join by name); `position_evidence[code]`; `slots[]` keyed by `(player_id, slot_id)` for score and phase evidence |
-| `league_benchmarks.json` | `reference.profiles[profile]` distributions; `comparisons[]` by `(player_id, profile)`; competition/season/extraction provenance |
+| `league_benchmarks.json` | Broad `reference.profiles[profile]` and `comparisons[]` by `(player_id, profile)`; native `reference.native_profiles[profile:position]` and `native_comparisons[]` by `(player_id, profile, native_position)`; competition/season/extraction provenance |
 | `optimal_xi.json` | canonical baseline assignment by `slot_id`, nullable `player_id`, score/totals and effective policy; embedded assessment is a copy of the canonical slot evidence |
 | `squad_depth.json` | `baseline` must equal XI; `coverage[]` keyed by slot, deputy IDs, eligible edge refs by `(slot_id, player_id)`; starter-loss scenarios by `removed_player_id`, ordered assignment refs and separate score/coverage deltas |
 | `signing_simulations.json` | baseline file refs and totals, candidate `player_id`, ordered assignment refs, changes and same-original-ID absences; scenario availability is assumed, not observed |

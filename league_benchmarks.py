@@ -12,7 +12,7 @@ REFRESH_DAYS = 30
 SEASON_GRACE_DAYS = 31
 MIN_LEAGUE_SPAN_DAYS = 120
 MIN_FIXTURE_ONLY_SPAN_DAYS = 180
-DETECTION_POLICY = 3
+DETECTION_POLICY = 5  # invalidate caches that may expose unavailable reference histograms
 
 
 def identifier(value):
@@ -276,10 +276,14 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
         groups[uid].append(row)
     duplicates = sum(len(group) for group in groups.values() if len(group) != 1)
     profiles = {"GK": model["gk"], **model["outfield"]}
-    counts = {profile: Counter() for profile in profiles}
-    scores = {profile: [] for profile in profiles}
-    eligible_clubs = {profile: set() for profile in profiles}
-    scored_clubs = {profile: set() for profile in profiles}
+    # Reuse the inherited weight vector, but qualify each population using
+    # its own native code. The broad group remains a separate legacy summary.
+    populations = {p: (p, profile_codes[p]) for p in profiles}
+    populations.update({f"{p}:{code}": (p, (code,)) for p in profiles for code in profile_codes[p]})
+    counts = {key: Counter() for key in populations}
+    scores = {key: [] for key in populations}
+    eligible_clubs = {key: set() for key in populations}
+    scored_clubs = {key: set() for key in populations}
     population = 0
     population_clubs = set()
     for group in groups.values():
@@ -295,25 +299,25 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
         # No category-only or malformed goalkeeper rating determines type.
         applicable = {"GK": profiles["GK"]} if gk is not None and gk >= 18 else model["outfield"]
         weighted = scorer(attrs, applicable) if gk is not None else {}
-        for profile in profiles:
-            count = counts[profile]
+        for key, (profile, codes) in populations.items():
+            count = counts[key]
             if gk is None:
                 count["unknown_type"] += 1
             elif profile not in applicable:
                 count["incompatible_type"] += 1
             else:
-                fit = familiarity(evidence, profile_codes[profile])
+                fit = familiarity(evidence, codes)
                 if fit != "confirmed":
                     count[fit] += 1
                     continue
                 count["eligible"] += 1
-                eligible_clubs[profile].add(club)
+                eligible_clubs[key].add(club)
                 score = weighted.get(profile)
                 if score is None:
                     count["missing_attributes"] += 1
                     continue
-                scores[profile].append(score)
-                scored_clubs[profile].add(club)
+                scores[key].append(score)
+                scored_clubs[key].add(club)
     result = {}
     for profile, values in scores.items():
         count = counts[profile]
@@ -337,7 +341,7 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
             "p25": quantile(values, 0.25) if not reasons else None,
             "p75": quantile(values, 0.75) if not reasons else None,
             "p90": quantile(values, 0.9) if not reasons else None,
-            "histogram": [[value, frequency] for value, frequency in sorted(Counter(values).items())],
+            "histogram": [[value, frequency] for value, frequency in sorted(Counter(values).items())] if not reasons else [],
             "warnings": [warning for condition, warning in (
                 (count["unknown_type"] > 0, "unknown_player_type_excluded"),
                 (count["unknown"] > 0, "unknown_familiarity_excluded"),
@@ -347,7 +351,10 @@ def aggregate_reference(rows, club_uids, model, profile_codes, *, evidence_for, 
     return {"status": "available" if any(p["status"] == "available" for p in result.values()) else "insufficient_samples",
             "population": population, "league_clubs": len(members), "population_clubs": len(population_clubs),
             "unknown_team_slot": unknown_team,
-            "missing_player_uid": missing_uid, "duplicate_player_rows": duplicates, "profiles": result}
+            "missing_player_uid": missing_uid, "duplicate_player_rows": duplicates,
+            "profiles": {p: {**result[p], "reference_population": "profile_group", "reference_position_codes": list(profile_codes[p])} for p in profiles},
+            "native_profiles": {key: {**result[key], "profile": profile, "native_position": codes[0], "reference_population": "native_position"}
+                                for key, (profile, codes) in populations.items() if ":" in key}}
 
 
 def reuse_reference(cache, detection, model_hash, observed_date):
@@ -372,9 +379,10 @@ def build_report(cache, people, career, observed_date, model_hash, profile_codes
               "criteria": {"current_club": "detected_league", "team_slot": 0, "position_minimum": 15,
                            "exact_numeric_familiarity": True, "min_sample": MIN_SAMPLE,
                            "min_contributing_clubs": MIN_CONTRIBUTING_CLUBS,
-                           "min_attribute_coverage": MIN_ATTRIBUTE_COVERAGE, "refresh_game_days": REFRESH_DAYS},
+                           "min_attribute_coverage": MIN_ATTRIBUTE_COVERAGE, "refresh_game_days": REFRESH_DAYS,
+                           "inherited_profile_position_mapping": {profile: list(codes) for profile, codes in profile_codes.items()}},
               "source": "temporary fmsave export", "competition": None, "season_start_year": None,
-              "extraction_game_date": None, "reference": None, "comparisons": [], "warnings": []}
+              "extraction_game_date": None, "reference": None, "comparisons": [], "native_comparisons": [], "warnings": []}
     if not isinstance(cache, dict) or not cache:
         report.update(unavailable("benchmark_not_captured"))
     elif cache.get("version") != 1:
@@ -401,18 +409,21 @@ def build_report(cache, people, career, observed_date, model_hash, profile_codes
     for person in sorted(people, key=lambda p: p["player_id"]):
         evidence = evidence_for(person["raw"])
         gk = evidence["gk"]["rating"]
-        for profile, codes in profile_codes.items():
+        populations = [(p, codes, None) for p, codes in profile_codes.items()]
+        populations += [(p, (code,), code) for p, codes in profile_codes.items() for code in codes]
+        for profile, codes, native in populations:
             score = person["scores"].get(profile)
             fit = familiarity(evidence, codes)
-            distribution = report["reference"]["profiles"].get(profile) if report["reference"] else None
+            distribution = (report["reference"].get("native_profiles", {}).get(f"{profile}:{native}") if native else report["reference"]["profiles"].get(profile)) if report["reference"] else None
             reason = (report["reason"] if report["status"] != "available" else
                       "unknown_player_type" if gk is None else
                       "incompatible_player_type" if (profile == "GK") != (gk >= 18) else
                       "missing_attribute_profile_score" if score is None else
                       "position_familiarity_not_confirmed" if fit != "confirmed" else
+                      "native_reference_not_available" if distribution is None else
                       "insufficient_reference_sample" if distribution["status"] != "available" else None)
-            report["comparisons"].append({
-                "player_id": person["player_id"], "profile": profile, "reference_population": "profile_group", "reference_position_codes": list(codes), "attribute_profile_score": score,
+            (report["native_comparisons"] if native else report["comparisons"]).append({
+                "player_id": person["player_id"], "profile": profile, "reference_population": "native_position" if native else "profile_group", "native_position": native, "reference_position_codes": list(codes), "attribute_profile_score": score,
                 "position_familiarity": fit, "status": "unavailable" if reason else "available", "reason": reason,
                 "sample_size": distribution["sample_size"] if distribution else None,
                 "competition_id": report["competition"]["id"] if report["competition"] else None,

@@ -175,6 +175,8 @@ class OptimalXITests(unittest.TestCase):
                      "scoring_model": base["scoring_model"], "competition": {"id": "100"}, "extraction_game_date": "2026-12-15",
                      "comparisons": [{"player_id": "a", "profile": "CB", "reason": None, "percentile": 70,
                                       "sample_size": 40, "season_start_year": 2026, "difference_from_median": 1, "warnings": []}]}
+        self.assertIsNone(assignments(report(people, benchmark=benchmark))["lcb"]["league_benchmark"])
+        benchmark["native_comparisons"] = [dict(benchmark["comparisons"][0], native_position="dc", reference_population="native_position")]
         contextual = report(people, benchmark=benchmark)
         self.assertEqual(assignments(contextual)["lcb"]["league_benchmark"]["percentile"], 70)
         self.assertEqual(contextual["outfield_total"], base["outfield_total"])

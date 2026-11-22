@@ -208,6 +208,8 @@ class IntegrationTests(unittest.TestCase):
         from datetime import date, timedelta
         import formation
 
+        self.assertEqual({k: set(v) for k, v in formation.PROFILE_POSITION_CODES.items()}, {k: set(v) for k, v in bridge.POSITION_CODES.items()})
+
         self.prepare_renderer()
         self.club[0]["nation_id"] = "7"
         self.league_clubs = [{"uid": str(i), "nation_id": "7"} for i in range(100, 112)]
@@ -250,16 +252,19 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual({c["player_id"] for c in first["comparisons"]}, expected_ids)
         defender_id = json.dumps(["rangers", CAREER, watcher.identity(self.cb)], separators=(",", ":"))
         defender = next(c for c in first["comparisons"] if c["player_id"] == defender_id and c["profile"] == "CB")
+        native_defender = next(c for c in first["native_comparisons"] if c["player_id"] == defender_id and c["profile"] == "CB" and c["native_position"] == "dc")
+        self.assertEqual(native_defender["reference_population"], "native_position")
         self.assertEqual(defender["status"], "available")
         self.assertEqual(defender["attribute_profile_score"], self.expected_score(self.cb, MODEL["outfield"]["CB"]))
         xi = json.loads((out / "optimal_xi.json").read_text(encoding="utf-8"))
         assigned_defender = next(r for r in xi["assignments"] if r["player_id"] == defender_id)
-        self.assertEqual(assigned_defender["league_benchmark"]["percentile"], defender["percentile"])
+        self.assertEqual(assigned_defender["league_benchmark"]["percentile"], native_defender["percentile"])
+        self.assertEqual(assigned_defender["league_benchmark"]["native_position"], "dc")
         depth = json.loads((out / "squad_depth.json").read_text(encoding="utf-8"))
         edge = next(e for row in depth["coverage"] if row["slot_id"] == assigned_defender["slot_id"]
                     for e in row["eligible_players"] if e["player_id"] == defender_id)
-        self.assertEqual(edge["league"]["comparison"]["percentile"], defender["percentile"])
-        self.assertEqual(edge["league"]["comparison"]["contributing_clubs"], first["reference"]["profiles"]["CB"]["contributing_clubs"])
+        self.assertEqual(edge["league"]["comparison"]["percentile"], native_defender["percentile"])
+        self.assertEqual(edge["league"]["comparison"]["contributing_clubs"], first["reference"]["native_profiles"]["CB:dc"]["contributing_clubs"])
         self.assertNotIn("Unselected league player", path.read_text(encoding="utf-8"))
         self.assertNotIn("Unselected league player", str(self.dump()))
         self.assertEqual(sum(c[:2] == ("export", "players") for c in self.commands), 1)

@@ -10,6 +10,8 @@ FM_POSITION_CODES = frozenset(("gk", "sw", "dl", "dc", "dr", "dm", "ml", "mc", "
                               "aml", "amc", "amr", "stc", "wbl", "wbr"))
 SIDES = frozenset(("left", "centre", "right"))
 PHASES = ("ip", "oop")
+PROFILE_POSITION_CODES = {"GK": ("gk",), "FB": ("dl", "dr", "wbl", "wbr"), "CB": ("dc", "sw"),
+                          "6": ("dm", "mc"), "wing": ("aml", "amr", "ml", "mr"), "10": ("amc", "mc"), "9": ("stc",)}
 
 
 def table(value, field, required, optional=()):
@@ -100,6 +102,8 @@ def validate_formation(config, profiles):
         selection_position = choice(raw.get("selection_position", positions[0]), set(positions), f"{field}.selection_position")
         if (profile == "GK" and positions != ["gk"]) or (profile != "GK" and "gk" in positions):
             raise ValueError(f"{field}: GK profile and goalkeeper position must agree")
+        if profile in PROFILE_POSITION_CODES and selection_position not in PROFILE_POSITION_CODES[profile]:
+            raise ValueError(f"{field}.selection_position: no inherited {profile} profile mapping for {selection_position}")
         phases = {key: phase(raw.get(key), f"{field}.{key}", side) for key in PHASES}
         for key, responsibility in phases.items():
             pos = responsibility["position"]
