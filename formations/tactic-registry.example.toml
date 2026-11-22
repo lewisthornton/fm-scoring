@@ -1,0 +1,8 @@
+# Choose an ID explicitly; this file has no default or active tactic.
+version = 1
+
+[tactics]
+synthetic-433 = "synthetic-433.toml"
+synthetic-asymmetric = "synthetic-asymmetric.toml"
+legacy-433 = "default.toml"
+legacy-asymmetric = "asymmetric-4231.toml"

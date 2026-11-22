@@ -1,0 +1,56 @@
+# Original invented identifiers and constraints. NOT Football Manager roles.
+version = 1
+id = "synthetic-r2"
+origin = "synthetic"
+source = "Invented R2 schema examples; no game or upstream role data"
+
+[[roles]]
+id = "ip.alpha"
+label = "Alpha node"
+placements = [{position = "gk", side = "centre"}]
+
+[[roles]]
+id = "oop.alpha"
+label = "Alpha node"
+placements = [{position = "gk", side = "centre"}]
+
+[[roles]]
+id = "ip.rim"
+label = "Rim node"
+placements = [{position = "dl", side = "left"}, {position = "dr", side = "right"}, {position = "wbl", side = "left"}]
+
+[[roles]]
+id = "ip.triangle"
+label = "Triangle node"
+placements = [{position = "dc", side = "right"}]
+min_centre_backs = 3
+
+[[roles]]
+id = "ip.base"
+label = "Base node"
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "centre"}, {position = "dc", side = "right"}]
+
+[[roles]]
+id = "oop.base"
+label = "Base node"
+placements = [{position = "dc", side = "left"}, {position = "dc", side = "right"}, {position = "dl", side = "left"}, {position = "dr", side = "right"}]
+
+[[roles]]
+id = "ip.link"
+label = "Link node"
+placements = [{position = "dm", side = "centre"}, {position = "dm", side = "left"}, {position = "mc", side = "left"}, {position = "mc", side = "right"}, {position = "amc", side = "centre"}, {position = "amc", side = "left"}]
+
+[[roles]]
+id = "oop.link"
+label = "Link node"
+placements = [{position = "dm", side = "centre"}, {position = "dm", side = "left"}, {position = "dm", side = "right"}, {position = "mc", side = "left"}, {position = "mc", side = "right"}, {position = "mc", side = "centre"}]
+
+[[roles]]
+id = "ip.tip"
+label = "Tip node"
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}, {position = "stc", side = "centre"}]
+
+[[roles]]
+id = "oop.tip"
+label = "Tip node"
+placements = [{position = "aml", side = "left"}, {position = "amr", side = "right"}, {position = "ml", side = "left"}, {position = "mr", side = "right"}, {position = "stc", side = "centre"}]

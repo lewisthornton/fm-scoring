@@ -1,5 +1,9 @@
 # Tactical formation configuration (version 1)
 
+For the separate experimental v2 role-aware configuration and explicit tactic
+selector, see [R2: tactic-driven configuration](TACTIC_V2.md). The operational
+bridge still uses this version 1 format and its unchanged scoring model.
+
 The default is an invented conventional 4-3-3 using the seven existing
 fm27v2 scoring profiles. `asymmetric-4231.toml` is an invented alternative
 with an overlapping left-back, a conservative right-back and different IP/OOP

@@ -1,0 +1,107 @@
+# Invented example only. No role ability model is attached.
+version = 2
+id = "synthetic-433"
+name = "Synthetic 4-3-3"
+source = {kind = "manual", reference = "Invented R2 example"}
+phase_weights = {ip = 0.5, oop = 0.5}
+
+[[slots]]
+id = "gk"
+label = "Keeper"
+side = "centre"
+selection_position = "gk"
+legacy_profile = "GK"
+ip = {position = "gk", side = "centre", role_status = "user_defined", role_id = "ip.alpha"}
+oop = {position = "gk", side = "centre", role_status = "user_defined", role_id = "oop.alpha"}
+
+[[slots]]
+id = "lb"
+label = "Left-back"
+side = "left"
+selection_position = "dl"
+positions = ["dl", "wbl"]
+legacy_profile = "FB"
+ip = {position = "dl", side = "left", role_status = "user_defined", role_id = "ip.rim"}
+oop = {position = "dl", side = "left", role_status = "user_defined", role_id = "oop.base"}
+
+[[slots]]
+id = "lcb"
+label = "Left centre-back"
+side = "left"
+selection_position = "dc"
+legacy_profile = "CB"
+ip = {position = "dc", side = "left", role_status = "user_defined", role_id = "ip.base"}
+oop = {position = "dc", side = "left", role_status = "user_defined", role_id = "oop.base"}
+
+[[slots]]
+id = "rcb"
+label = "Right centre-back"
+side = "right"
+selection_position = "dc"
+legacy_profile = "CB"
+ip = {position = "dc", side = "right", role_status = "user_defined", role_id = "ip.base"}
+oop = {position = "dc", side = "right", role_status = "user_defined", role_id = "oop.base"}
+
+[[slots]]
+id = "rb"
+label = "Right-back"
+side = "right"
+selection_position = "dr"
+positions = ["dr", "wbr"]
+legacy_profile = "FB"
+ip = {position = "dr", side = "right", role_status = "user_defined", role_id = "ip.rim"}
+oop = {position = "dr", side = "right", role_status = "user_defined", role_id = "oop.base"}
+
+[[slots]]
+id = "dm"
+label = "Middle pivot"
+side = "centre"
+selection_position = "dm"
+legacy_profile = "6"
+ip = {position = "dm", side = "centre", role_status = "user_defined", role_id = "ip.link"}
+oop = {position = "dm", side = "centre", role_status = "user_defined", role_id = "oop.link"}
+
+[[slots]]
+id = "lcm"
+label = "Left midfielder"
+side = "left"
+selection_position = "mc"
+legacy_profile = "6"
+ip = {position = "mc", side = "left", role_status = "user_defined", role_id = "ip.link"}
+oop = {position = "mc", side = "left", role_status = "user_defined", role_id = "oop.link"}
+
+[[slots]]
+id = "rcm"
+label = "Right midfielder"
+side = "right"
+selection_position = "mc"
+legacy_profile = "10"
+ip = {position = "mc", side = "right", role_status = "user_defined", role_id = "ip.link"}
+oop = {position = "mc", side = "right", role_status = "user_defined", role_id = "oop.link"}
+
+[[slots]]
+id = "lw"
+label = "Left forward"
+side = "left"
+selection_position = "aml"
+legacy_profile = "wing"
+ip = {position = "aml", side = "left", role_status = "user_defined", role_id = "ip.tip"}
+oop = {position = "aml", side = "left", role_status = "user_defined", role_id = "oop.tip"}
+
+[[slots]]
+id = "rw"
+label = "Right forward"
+side = "right"
+selection_position = "amr"
+legacy_profile = "wing"
+ip = {position = "amr", side = "right", role_status = "user_defined", role_id = "ip.tip"}
+oop = {position = "amr", side = "right", role_status = "user_defined", role_id = "oop.tip"}
+
+[[slots]]
+id = "st"
+label = "Centre forward"
+side = "centre"
+selection_position = "stc"
+legacy_profile = "9"
+ip = {position = "stc", side = "centre", role_status = "user_defined", role_id = "ip.tip"}
+oop = {position = "stc", side = "centre", role_status = "user_defined", role_id = "oop.tip"}
