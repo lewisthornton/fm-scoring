@@ -1,5 +1,8 @@
 # R3 — Experimental FM27 tactical role ability reference port
 
+See [R4](ROLE_ABILITY_R4.md) for scoped raw evidence capture and opt-in report
+integration. R3's numerical model and build registry remain unchanged.
+
 Review date 2026-11-22. Base integration commit
 `9b48f0dcec4dbdd2b876d56acf51048ea2410ad7` (R1 and R2 merged).
 This milestone is a pure Python reference implementation and **not** an
