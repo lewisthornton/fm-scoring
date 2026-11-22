@@ -36,12 +36,12 @@ DEFAULT_DB = Path(__file__).resolve().parent / 'fm_rangers_scoped.sqlite3'
 BASE_FIELDS = {
     'uid','unique_id','name','birth_date','age','club_uid','club_name',
     'team_id','team_slot','natural_positions','accomplished_positions',
-    'left_foot','right_foot','ability_current','ability_potential',
+    'left_foot','right_foot','raw_left_foot','raw_right_foot','ability_current','ability_potential',
     'transfer_value','transfer_value_state','contract_wage','contract_start',
     'contract_end','contract_squad_status','on_loan','loan_parent_club_uid',
     'loan_parent_club_name','loan_end','traits','traits_code',
 }
-FIELD_PREFIXES=('attributes_','positions_','personality_')
+FIELD_PREFIXES=('attributes_','raw_attributes_','positions_','personality_')
 SNAPSHOT_COLUMNS='id,career,source_file,source_sha256,selection_sha256,game_date,game_build,imported_utc,player_count,changed_count'
 SNAPSHOT_SCHEMA='''CREATE TABLE {name} (
     id INTEGER PRIMARY KEY,
@@ -307,9 +307,23 @@ def choose_rows(world_csv, candidates, managed_uid):
             log(f'  ...and {len(missing)-12} more')
     return rows, membership, found
 
-def important(row):
-    return {k:v for k,v in row.items() if v not in (None,'') and
-            (k in BASE_FIELDS or k.startswith(FIELD_PREFIXES))}
+def important(row, info=None):
+    """Keep raw parser values only for already-scoped records, never derive them.
+
+    Stable parser/build evidence participates in the content hash. Dates and
+    source-file hashes remain in the existing snapshot, so unchanged imports
+    are still idempotent across game dates.
+    """
+    record = {k:v for k,v in row.items() if v not in (None,'') and
+              (k in BASE_FIELDS or k.startswith(FIELD_PREFIXES))}
+    if isinstance(info, dict):
+        evidence = {target: info[source] for source, target in (
+            ('build','game_build'), ('db_version','database_version'),
+            ('fmsave_version','parser_version'), ('known_build','parser_known_build'), ('game','game'))
+            if source in info and type(info[source]) in (str, int, bool) and info[source] not in (None,'')}
+        if evidence:
+            record['role_evidence'] = {'version': 1, **evidence}
+    return record
 
 
 def optional_int(v):
@@ -463,7 +477,7 @@ def import_selection(db,career,source,save_hash,sel_hash,metadata,rows,membershi
         previous=dict(db.execute('SELECT player_key,record_hash FROM player_latest WHERE career=?',(career,)))
         changes=[]
         for key,row in rows.items():
-            payload=json.dumps(important(row),ensure_ascii=False,sort_keys=True,separators=(',',':'))
+            payload=json.dumps(important(row,info),ensure_ascii=False,sort_keys=True,separators=(',',':'))
             digest=hashlib.sha256(payload.encode('utf-8')).hexdigest()
             if previous.get(key)!=digest:
                 changes.append((key,row,digest,payload))

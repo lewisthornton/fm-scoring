@@ -1,0 +1,5 @@
+# Explicit selection required; copy to a private location and register your confirmed tactics.
+version = 1
+
+[tactics]
+r4-example = "r4-manual-example.toml"
