@@ -1,5 +1,9 @@
 # R1 — FM27 tactic role ability: evidence and implementation readiness
 
+Later milestone: [R3 reference port and validation report](ROLE_ABILITY_R3.md)
+records the subsequently supplied redistribution grant; the R1 findings below
+remain the historical review. Independent game-numeric validation is still open.
+
 Review date: 2026-11-22. Integration baseline: `7c018c9f494827c1f09e6bb0354be4584e19ba47`.
 Decision: feasible as a research programme, **not yet cleared for a distributed
 FM role engine or an operational scoring switch**. R1 adds documentation and
