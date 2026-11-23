@@ -5,7 +5,7 @@ import {join} from "node:path";
 import {execFileSync} from "node:child_process";
 import type {Envelope, Overview, Signing} from "../src/types";
 
-test("shared shell preserves pinned navigation and exposes planned workspaces",async ({page,request},info)=>{
+test("shared shell preserves pinned navigation and exposes squad directory",async ({page,request},info)=>{
   await page.goto("/");
   await expect(page.getByRole("heading",{name:"Squad overview"})).toBeVisible();
   const generation=new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation");
@@ -23,9 +23,9 @@ test("shared shell preserves pinned navigation and exposes planned workspaces",a
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
     expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa"]).analyze()).violations.map(v=>v.id)).toEqual([]);
   }
-  await nav.getByRole("button",{name:/Squad Planned/}).click();
-  await expect(page.getByRole("heading",{name:"Squad",exact:true})).toBeVisible();
-  await expect(page.getByText("This workspace is not implemented yet.",{exact:false})).toBeVisible();
+  await nav.getByRole("button",{name:"Squad",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Squad directory",exact:true})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Squad directory table"})).toBeVisible();
   await expect(page.getByRole("main")).toBeFocused();
   await nav.getByRole("button",{name:"Tactics & XI"}).click();
   await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
@@ -43,6 +43,189 @@ test("shared shell preserves pinned navigation and exposes planned workspaces",a
   await page.goBack();
   await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
   expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(generation);
+});
+
+test("squad search, sorting, evidence, navigation and responsive layouts",async ({page,request},info)=>{
+  const historySnapshot=()=>page.evaluate(()=>({href:location.href,length:history.length,state:history.state}));
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await page.goto("/");
+  await expect(page.getByRole("heading",{name:"Squad overview"})).toBeVisible();
+  const generation=new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")!;
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation}})).json();
+  const squad=over.data.players.filter(p=>p.cohorts.includes("squad"));
+  const assigned=over.data.baseline.find(a=>a.player_id&&squad.some(p=>p.player_id===a.player_id))!;
+  const player=squad.find(p=>p.player_id===assigned.player_id)!;
+  await page.getByRole("button",{name:"Squad",exact:true}).click();
+  await expect(page.getByRole("status").filter({hasText:`${squad.length} of ${squad.length} active squad players`})).toBeVisible();
+  const squadHistory=await historySnapshot();
+  for(const [label,count] of [["Active squad",squad.length],["Known availability",squad.filter(p=>p.availability!=="unknown").length],["Unknown availability",squad.filter(p=>p.availability==="unknown").length],["Assigned in XI",over.data.baseline.filter(a=>a.player_id).length]] as const){
+    await expect(page.locator(".squad-metrics .metric").filter({has:page.getByText(label,{exact:true})}).locator("strong")).toHaveText(String(count));
+  }
+  const table=page.getByRole("region",{name:"Squad directory table"});
+  await expect(table.getByRole("row")).toHaveCount(Math.min(25,squad.length)+1);
+  for(const width of [1440,1280,768,390]){
+    await page.setViewportSize({width,height:900});
+    await page.screenshot({path:info.outputPath(`squad-${width}.png`),fullPage:true});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa"]).analyze()).violations.map(v=>v.id)).toEqual([]);
+  }
+  const search=page.getByRole("searchbox",{name:"Search"});
+  await search.fill(player.display_name.toUpperCase());
+  await expect(table.getByRole("button",{name:player.display_name,exact:true})).toBeVisible();
+  for(const width of [1440,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`squad-filtered-${width}.png`),fullPage:true});}
+  await table.getByRole("button",{name:player.display_name,exact:true}).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+  const params=new URLSearchParams(new URL(page.url()).hash.slice(1));
+  expect(params.get("slot")).toEqual(assigned.slot_id);expect(params.get("player")).toEqual(player.player_id);expect(params.get("generation")).toEqual(generation);
+  const tacticsHistory=await historySnapshot();
+  expect(tacticsHistory.length).toBe(squadHistory.length+1);
+  const expectSquad=async()=>{await expect(page).toHaveURL(squadHistory.href);await expect(page.getByRole("heading",{name:"Squad directory"})).toBeVisible();};
+  const expectTactics=async()=>{await expect(page).toHaveURL(tacticsHistory.href);await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();await expect(page.getByRole("heading",{name:over.data.slots.find(s=>s.id===assigned.slot_id)!.label,exact:true})).toBeVisible();};
+  await page.goBack();await expectSquad();
+  await page.goForward();await expectTactics();
+  // Firefox 141 can add a same-URL history entry on full reload of a hash
+  // navigation, even on a plain HTML page. Verify restoration separately;
+  // traverse exactly one extra entry only if reload demonstrably added it.
+  await page.reload();await expectTactics();
+  const reloaded=await historySnapshot();
+  expect([tacticsHistory.length,tacticsHistory.length+1]).toContain(reloaded.length);
+  await page.goBack();
+  const backed=await historySnapshot();
+  const historyEvidence=info.outputPath("history-navigation.json");
+  fs.writeFileSync(historyEvidence,JSON.stringify({squadHistory,tacticsHistory,reloaded,backed},null,2));
+  await info.attach("history-navigation",{path:historyEvidence,contentType:"application/json"});
+  if(backed.href===tacticsHistory.href){
+    expect(reloaded.length).toBe(tacticsHistory.length+1);
+    await expectTactics();
+    await page.goBack();
+  }
+  await expectSquad();
+  await page.goForward();await expectTactics();
+  await page.goBack();await expectSquad();
+  await table.getByRole("button",{name:/Player ↑/}).click();
+  await expect(table.getByRole("columnheader",{name:/Player/})).toHaveAttribute("aria-sort","descending");
+  await page.getByRole("combobox",{name:"Availability",exact:true}).selectOption("unknown");
+  const unknown=squad.filter(p=>p.availability==="unknown").length;
+  await expect(page.getByRole("status").filter({hasText:`${unknown} of ${squad.length} active squad players`})).toBeVisible();
+  await page.getByRole("button",{name:"Reset filters"}).click();
+  await page.getByRole("combobox",{name:"Analysis domain"}).selectOption("keeper");
+  await expect(page.getByRole("status").filter({hasText:`${squad.filter(p=>p.keeper).length} of ${squad.length} active squad players`})).toBeVisible();
+  await page.getByRole("button",{name:"Reset filters"}).click();
+  await search.fill("zzzz-no-player");
+  await expect(page.getByText("No players match these filters.")).toBeVisible();
+  for(const width of [1440,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`squad-empty-${width}.png`),fullPage:true});}
+  await page.getByRole("button",{name:"Reset filters"}).click();
+  await expect(table).toBeVisible();
+});
+
+test("empty directory is distinct from unavailable pinned generation",async ({page,request},info)=>{
+  // An empty import is rejected by the watcher. Exercise the defensive UI
+  // boundary using an explicitly synthetic overview card projection only.
+  const current=await (await request.get("/api/current")).json();
+  const generation=current.generation_id;
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation}})).json();
+  await page.route("**/api/overview?*",async route=>route.fulfill({json:{...over,data:{...over.data,players:[],baseline:[]}}}));
+  await page.goto("/#"+new URLSearchParams({page:"Squad",generation}));
+  await expect(page.getByText(/No active squad players represented/)).toBeVisible();
+  await expect(page.getByText(/0 of 0 active squad players/)).toBeVisible();
+  for(const width of [1440,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`squad-no-active-${width}.png`),fullPage:true});}
+  await page.unroute("**/api/overview?*");
+  await page.goto("/#"+new URLSearchParams({page:"Squad",generation:"0".repeat(32)}));
+  await expect(page.getByRole("heading",{name:"Pinned generation unavailable"})).toBeVisible();
+  await expect(page.getByText(/No active squad players represented/)).toHaveCount(0);
+});
+
+test("squad pagination is bounded and keyboard-accessible",async ({page,request})=>{
+  const {generation_id:generation}=await (await request.get("/api/current")).json();
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation}})).json();
+  const original=over.data.players.filter(p=>p.cohorts.includes("squad"));
+  // Explicit synthetic card projection; no extra imports or fabricated XI assignments.
+  const extra=Array.from({length:26},(_,i)=>({...original[0],player_id:JSON.stringify(["rangers","invented-career",`pagination-${i}`]),display_name:`ZZ invented squad ${String(i+1).padStart(2,"0")}`,cohorts:["squad"]}));
+  const total=original.length+extra.length;
+  await page.route("**/api/overview?*",route=>route.fulfill({json:{...over,data:{...over.data,players:[...over.data.players,...extra]}}}));
+  await page.goto("/#"+new URLSearchParams({page:"Squad",generation}));
+  const table=page.getByRole("region",{name:"Squad directory table"}),rows=table.getByRole("row");
+  const previous=page.getByRole("button",{name:"Previous",exact:true}),next=page.getByRole("button",{name:"Next",exact:true});
+  await expect(rows).toHaveCount(26);await expect(previous).toBeDisabled();
+  await expect(page.getByText(`${total} of ${total} active squad players`)).toBeVisible();
+  await next.focus();await page.keyboard.press("Enter");
+  await expect(page.getByText(`Page 2 of ${Math.ceil(total/25)}`)).toBeVisible();
+  await expect(rows).toHaveCount(Math.min(25,total-25)+1);
+  await previous.focus();await page.keyboard.press("Enter");await expect(previous).toBeDisabled();
+  await next.click();
+  await page.getByRole("searchbox",{name:"Search"}).fill(extra.at(-1)!.display_name);
+  await expect(rows).toHaveCount(2);
+  await expect(table.getByText("No supported player destination")).toBeVisible();
+  await expect(table.getByRole("button",{name:extra.at(-1)!.display_name})).toHaveCount(0);
+  await page.getByRole("button",{name:"Reset filters"}).click();await expect(rows).toHaveCount(26);await expect(previous).toBeDisabled();
+  expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(generation);
+});
+
+test("squad remains pinned until explicit generation switch",async ({page,request})=>{
+  const root=join(process.env.TOUCHLINE_FIXTURE_DIR!,"generations");
+  const first=JSON.parse(fs.readFileSync(join(root,"current.json"),"utf8")).generation_id as string;
+  const second=fs.readdirSync(join(root,"generations")).find(id=>id!==first)!;
+  const rollback=(id:string)=>execFileSync("python",["-c","import sys; from touchline_generation import rollback; rollback(sys.argv[1],sys.argv[2])",root,id],{cwd:".."});
+  const overview:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation:first}})).json();
+  const overlap=overview.data.players.find(p=>p.cohorts.includes("squad")&&p.cohorts.includes("target"))!;
+  try{
+    await page.goto("/#"+new URLSearchParams({page:"Squad",generation:first,slot:"lb"}));
+    const row=page.getByRole("row").filter({hasText:overlap.display_name});
+    await expect(row.getByText("target",{exact:true})).toBeVisible();
+    rollback(second);
+    await expect(page.getByRole("button",{name:"Switch generation"})).toBeVisible({timeout:20000});
+    await expect(row.getByText("target",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Switch generation"}).click();
+    await expect(page.getByRole("heading",{name:"Squad directory"})).toBeVisible();
+    await expect(row.getByText("squad",{exact:true})).toBeVisible();
+    await expect(row.getByText("target",{exact:true})).toHaveCount(0);
+    expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toEqual(second);
+    await page.goBack();await expect(row.getByText("target",{exact:true})).toBeVisible();
+  }finally{rollback(first);}
+});
+
+test("assigned squad link reconciles canonical identity across generation switch",async ({page,request})=>{
+  const root=join(process.env.TOUCHLINE_FIXTURE_DIR!,"generations");
+  const first=JSON.parse(fs.readFileSync(join(root,"current.json"),"utf8")).generation_id as string;
+  const second=fs.readdirSync(join(root,"generations")).find(id=>id!==first)!;
+  const rollback=(id:string)=>execFileSync("python",["-c","import sys; from touchline_generation import rollback; rollback(sys.argv[1],sys.argv[2])",root,id],{cwd:".."});
+  const old:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation:first}})).json();
+  const destination:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation:second}})).json();
+  const assigned=old.data.baseline.find(a=>a.slot_id==="lb")!;
+  const player=old.data.players.find(p=>p.player_id===assigned.player_id)!;
+  const moved=destination.data.baseline.find(a=>a.player_id===player.player_id);
+  expect(moved?.slot_id).toBe("lb_new");
+  const params=()=>new URLSearchParams(new URL(page.url()).hash.slice(1));
+  try{
+    rollback(second);
+    for(const scenario of ["moved","unassigned","no longer squad","removed"] as const){
+      // Moved uses the genuine published generations. The other cases are
+      // explicit invented overview projections to isolate frontend reconciliation.
+      if(scenario!=="moved")await page.route("**/api/overview?*",route=>{
+        if(new URL(route.request().url()).searchParams.get("generation")!==second)return route.continue();
+        const players=destination.data.players.flatMap(p=>p.player_id!==player.player_id?[p]:scenario==="removed"?[]:[scenario==="no longer squad"?{...p,cohorts:["target"]}:p]);
+        const baseline=destination.data.baseline.map(a=>a.player_id===player.player_id?{...a,player_id:null}:a);
+        return route.fulfill({json:{...destination,data:{...destination.data,players,baseline}}});
+      });
+      await page.goto("/#"+new URLSearchParams({page:"Squad",generation:first}));
+      await page.getByRole("searchbox",{name:"Search"}).fill(player.display_name);
+      await page.getByRole("button",{name:player.display_name,exact:true}).click();
+      await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+      expect(params().get("generation")).toBe(first);expect(params().get("slot")).toBe("lb");expect(params().get("player")).toBe(player.player_id);
+      await page.getByRole("button",{name:"Switch generation"}).click();
+      await expect.poll(()=>params().get("generation")).toBe(second);
+      if(scenario==="moved"){
+        expect(params().get("slot")).toBe("lb_new");expect(params().get("player")).toBe(player.player_id);
+        await expect(page.getByRole("heading",{name:"Left-back",exact:true})).toBeVisible();
+      }else{
+        expect(params().get("slot")).toBe("");expect(params().get("player")).toBe("");
+        await expect(page.getByText("Select a pitch position or table row.")).toBeVisible();
+        await expect(page.getByText(/Selected player is no longer/)).toBeVisible();
+      }
+      await page.unroute("**/api/overview?*");
+    }
+  }finally{rollback(first);}
 });
 
 async function keyboardActivate(page:Page, text:RegExp) {
