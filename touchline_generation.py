@@ -218,6 +218,12 @@ def validate(reports, source):
         comparison_links(report)
     return {"players": players, "slots": slots, "assessments": evidence, "baseline": baseline,
             "depth": coverage, "absences": absences, "signings": candidates, "benchmarks": comparisons,
+            "slot_order": [row["id"] for row in f["slots"]],
+            "signing_order": [row["player_id"] for row in s["candidates"]],
+            "absence_order": [row["removed_player_id"] for row in d["starter_loss_scenarios"]],
+            "bench_cover": {k: d[k] for k in ("shared_cover", "bench_only_matching_capacity", "bench_cover_dependencies")},
+            "signing_assumptions": s["scenario_assumptions"],
+            "limitations": {"assessment": a["source_limitations"], "depth": d["limitations"], "signing": s["limitations"]},
             "summary": {"objective": x["objective"], "solver": x["solver"], "totals": totals,
                         "depth": d["summary"], "signings": s["evaluation_coverage"],
                         "benchmark": benchmark_identity(b)}}
