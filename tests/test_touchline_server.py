@@ -98,3 +98,48 @@ class TouchlineServerTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join()
+
+    def test_cached_bytes_and_fail_closed(self):
+        store = Store(self.root, CAREER, cache_entries=1)
+        original = store.data("overview", self.first)
+        self.assertEqual(len(store._cache), 1)
+        directory = self.root / "generations" / self.first
+        for name in ("manifest.json", generation.FILES[0]):
+            path = directory / name
+            saved = path.read_bytes()
+            try:
+                path.write_bytes(b" " + saved[1:])
+                with self.assertRaises(APIError):
+                    store.data("overview", self.first)
+                with self.assertRaises(APIError):
+                    store.data("current")
+            finally:
+                path.write_bytes(saved)
+            self.assertEqual(store.data("overview", self.first), original)
+        store.data("overview", self.second)
+        self.assertEqual(len(store._cache), 1)
+        self.assertEqual(next(iter(store._cache))[0], self.second)
+        self.assertEqual(store.data("overview", self.first), original)
+        moved = directory.with_name("temporarily-unavailable")
+        directory.rename(moved)
+        try:
+            with self.assertRaises(APIError):
+                store.data("overview", self.first)
+        finally:
+            moved.rename(directory)
+        self.assertEqual(store.data("overview", self.first), original)
+        tiny = Store(self.root, CAREER, cache_bytes=1)
+        tiny.data("overview", self.first)
+        self.assertEqual(len(tiny._cache), 0)
+        with self.assertRaises(APIError):
+            Store(self.root / "missing", CAREER).data("current")
+
+    def test_missing_bundle_and_port_conflict(self):
+        with self.assertRaises(ValueError):
+            make_server(self.store, self.root / "missing-dist", 0)
+        dist = Path(self.temp.name) / "port-dist"
+        dist.mkdir(exist_ok=True)
+        (dist / "index.html").write_text("<title>Invented</title>", encoding="utf-8")
+        with make_server(self.store, dist, 0) as server:
+            with self.assertRaises(OSError):
+                make_server(self.store, dist, server.server_port)

@@ -10,7 +10,7 @@ from test_rangers_integration import IntegrationTests, CAREER, player, bridge
 import touchline_generation as generation
 
 
-def create(root):
+def create(root, squad_count=9, target_count=19, *, changed_slot=False):
     fixture = IntegrationTests()
     fixture.setUp()
     try:
@@ -34,7 +34,13 @@ def create(root):
                         p[k] = "5" if uid == 11 else "3"
             fixture.squad.append(p)
             fixture.world.append(p)
-        for uid in range(20, 36):
+        for uid in range(100, 100 + squad_count - 9):
+            p = player(uid, f"Invented squad {uid}", squad=True)
+            p["positions_dc"] = "1"
+            p["positions_" + ("dl", "dc", "dr", "dm", "mc", "aml", "amr", "stc")[uid % 8]] = "20"
+            fixture.squad.append(p)
+            fixture.world.append(p)
+        for uid in range(1000, 1000 + target_count - 3) if target_count != 19 else range(20, 36):
             p = player(uid, f"Invented target {uid}")
             p["positions_dc"] = "1"
             p["positions_dl"] = "20"
@@ -52,6 +58,10 @@ def create(root):
             return generation.publish(root, reports, evidence)
         first = publish()
         fixture.process(candidates=[])
+        if changed_slot:
+            alternate = fixture.root / "alternate.toml"
+            alternate.write_text((ROOT / "formations/default.toml").read_text(encoding="utf-8").replace('id = "lb"', 'id = "lb_new"'), encoding="utf-8")
+            args.formation = alternate
         second = publish()
         generation.rollback(root, first)
         return first, second

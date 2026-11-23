@@ -15,6 +15,7 @@ async function keyboardActivate(page:Page, text:RegExp) {
   throw new Error("Keyboard target not reached: "+text);
 }
 test("canonical workflow, keyboard, offline requests, responsive evidence and measurements",async ({page,request},info)=>{
+  await page.emulateMedia({reducedMotion:"reduce"});
   const external:string[]=[];
   page.on("request",r=>{if(!r.url().startsWith("http://127.0.0.1:8765/"))external.push(r.url());});
   const start=Date.now();
@@ -39,6 +40,7 @@ test("canonical workflow, keyboard, offline requests, responsive evidence and me
   await expect(page.getByRole("button",{name:targetPlayer.display_name,exact:true})).toBeVisible();
   await keyboardActivate(page,new RegExp(targetPlayer.display_name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
   await expect(page.getByRole("heading",{name:targetPlayer.display_name,exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:targetPlayer.display_name,exact:true})).toBeFocused();
   await keyboardActivate(page,/Inspect signing impact/);
   await expect(page.getByRole("heading",{name:"Revised XI"})).toBeVisible();
   const signingResponse=await request.get("/api/signing",{params:{generation:gid,player:target.player_id}});
@@ -70,6 +72,12 @@ test("canonical workflow, keyboard, offline requests, responsive evidence and me
     await page.screenshot({path:info.outputPath("recruitment-"+width+".png"),fullPage:true});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   }
+  // 1440px at 200% zoom corresponds to a 720 CSS-pixel layout viewport.
+  // This is a reflow check, not a claim of testing browser chrome zoom.
+  await page.setViewportSize({width:720,height:450});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  expect(await page.evaluate(()=>matchMedia("(prefers-reduced-motion: reduce)").matches)).toBeTruthy();
+  await page.setViewportSize({width:390,height:900});
   const axe=await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa"]).analyze();
   expect(axe.violations.map(v=>v.id)).toEqual([]);
   expect(external).toEqual([]);
@@ -102,6 +110,10 @@ test("generation remains pinned through updates and missing selections clear",as
     await expect(page.getByRole("button",{name:"Switch generation"})).toBeVisible({timeout:20000});
     await page.getByRole("button",{name:"Switch generation"}).click();
     await expect(page.getByText(/Selected player is no longer/)).toBeVisible();
+    await expect(page.getByText(/Selected slot no longer exists/)).toBeVisible();
+    await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+    await page.getByRole("navigation",{name:"Workspaces"}).getByRole("button",{name:"Recruitment"}).click();
+    await page.getByLabel("Selection slot").selectOption("lb_new");
     await expect(page.getByText(/0 of 0 active targets/)).toBeVisible();
     expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toEqual(second);
     await page.goto("/#"+new URLSearchParams({page:"Overview",generation:"0".repeat(32)}));

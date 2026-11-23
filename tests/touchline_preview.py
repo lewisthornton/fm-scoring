@@ -7,6 +7,7 @@ from touchline_server import make_server, Store
 
 with tempfile.TemporaryDirectory() as temp:
     root = Path(os.environ.get("TOUCHLINE_FIXTURE_DIR", temp)) / "generations"
-    create(root)
+    counts = {"small": (9, 19), "medium": (45, 80), "large": (60, 500)}
+    create(root, *counts[os.environ.get("TOUCHLINE_BENCH_SIZE", "small")], changed_slot=True)
     with make_server(Store(root, CAREER), ROOT / "touchline" / "dist") as server:
         server.serve_forever()

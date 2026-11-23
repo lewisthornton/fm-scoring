@@ -27,14 +27,47 @@ jobs:
         run: python tests/touchline_runtime_smoke.py
       - name: Install browser
         working-directory: touchline
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Browser workflow and accessibility
         working-directory: touchline
-        run: npm run browser
+        run: npm run browser -- workflow.spec.ts
+      - name: Representative browser performance
+        working-directory: touchline
+        run: |
+          mkdir -p benchmark-evidence/workflow
+          cp -r test-results/* benchmark-evidence/workflow/
+          for size in small medium large; do
+            TOUCHLINE_BENCH_SIZE=$size npm run browser -- --project chromium performance.spec.ts
+            mkdir -p "benchmark-evidence/$size"
+            cp -r test-results/* "benchmark-evidence/$size/"
+          done
       - name: Upload visual and performance evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: touchline-browser-evidence
-          path: touchline/test-results/
+          path: |
+            touchline/test-results/
+            touchline/benchmark-evidence/
           if-no-files-found: warn
+      - name: Upload production frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchline-production-dist
+          path: touchline/dist/
+          if-no-files-found: error
+  windows-launch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build production bundle
+        working-directory: touchline
+        run: npm ci && npm run build
+      - name: Verify optional Windows launcher
+        run: python tests/touchline_launcher_smoke.py
