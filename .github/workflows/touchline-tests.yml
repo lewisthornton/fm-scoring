@@ -26,6 +26,7 @@ jobs:
       - name: Python-only production runtime smoke
         run: python tests/touchline_runtime_smoke.py
       - name: Install browser
+        timeout-minutes: 10
         working-directory: touchline
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Browser workflow and accessibility
@@ -61,13 +62,20 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: touchline/package-lock.json
-      - name: Build and install Chromium
+      - name: Install frontend dependencies
+        timeout-minutes: 10
         working-directory: touchline
-        run: |
-          npm ci
-          npm run build
-          npx playwright install --with-deps chromium
+        run: npm ci
+      - name: Build production frontend
+        timeout-minutes: 10
+        working-directory: touchline
+        run: npm run build
+      - name: Install Chromium
+        timeout-minutes: 10
+        working-directory: touchline
+        run: npx playwright install --with-deps chromium
       - name: Representative browser performance
+        timeout-minutes: 10
         working-directory: touchline
         env:
           TOUCHLINE_BENCH_SIZE: ${{ matrix.size }}
