@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "integrations" / "rangers"))
 import rangers_autosave_watcher as watcher
 import rangers_fm_scoring_bridge as bridge
 import score as native
+import touchline_generation as generation
 
 MODEL = tomllib.loads((ROOT / "weights/fm27v2.toml").read_text(encoding="utf-8"))
 CAREER = "invented-career"
@@ -53,6 +54,103 @@ def write_csv(path, rows):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_touchline_generation_contract(self):
+        self.process()
+        self.prepare_renderer()
+        shutil.copyfile(ROOT / "touchline_generation.py", self.root / "touchline_generation.py")
+        out = self.render()
+        legacy = {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()}
+        before = self.dump()
+        destination = self.root / "touchline"
+        self.render("--publish-generation", str(destination))
+        first, indexes = generation.read_current(destination)
+        self.assertEqual(self.dump(), before)
+        self.assertEqual(legacy, {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()})
+        directory = destination / "generations" / first["generation_id"]
+        for name in generation.FILES:
+            self.assertEqual((directory / name).read_bytes(), legacy[name])
+        self.assertEqual(list(indexes["players"]), sorted(indexes["players"]))
+        self.assertEqual(indexes, generation.read_generation(directory)[1])
+        self.process(candidates=[{"Unique ID": "3"}])
+        self.render("--publish-generation", str(destination))
+        second, _ = generation.read_current(destination)
+        self.assertEqual(first["game_date"], second["game_date"])
+        self.assertNotEqual(first["source_sha256"], second["source_sha256"])
+        self.assertNotEqual(first["cohort_sha256"], second["cohort_sha256"])
+        self.assertEqual(first["source"]["snapshots"], second["source"]["snapshots"])
+        self.assertNotEqual(first["generation_id"], second["generation_id"])
+        generation.rollback(destination, first["generation_id"])
+        self.assertEqual(generation.read_current(destination)[0], first)
+        generation.rollback(destination, second["generation_id"])
+        second_dir = destination / "generations" / second["generation_id"]
+        manifest_path = second_dir / "manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+        manifest_path.write_bytes(manifest_bytes + b"\n")
+        with self.assertRaisesRegex(ValueError, "Noncanonical"):
+            generation.rollback(destination, second["generation_id"])
+        manifest_path.write_bytes(manifest_bytes)
+        damaged = second_dir / generation.FILES[0]
+        original = damaged.read_bytes()
+        damaged.write_bytes(b"{")
+        with self.assertRaises(ValueError):
+            generation.read_current(destination)
+        damaged.write_bytes(original)
+        damaged.unlink()
+        with self.assertRaises(FileNotFoundError):
+            generation.read_current(destination)
+        damaged.write_bytes(original)
+        self.assertEqual(generation.read_current(destination)[0], second)
+        # A matching file hash must not make malformed JSON acceptable.
+        damaged.write_bytes(b"{")
+        second["files"][generation.FILES[0]].update(bytes=1, sha256=generation.digest(b"{"))
+        manifest_path.write_bytes(generation.canonical(second))
+        with self.assertRaises(json.JSONDecodeError):
+            generation.read_generation(second_dir)
+        damaged.write_bytes(original)
+        manifest_path.write_bytes(manifest_bytes)
+
+    def test_touchline_interrupted_and_inconsistent_publication(self):
+        self.process()
+        args = SimpleNamespace(db=self.dbpath, career=CAREER, formation=None)
+        evidence = {}
+        reports = bridge.build_reports(args, ROOT, provenance=evidence)[:6]
+        destination = self.root / "touchline"
+        first = generation.publish(destination, reports, evidence)
+        with patch.object(generation.os, "replace", side_effect=PermissionError("locked")):
+            with self.assertRaises(PermissionError):
+                generation.publish(destination, reports, evidence)
+        self.assertEqual(generation.read_current(destination)[0]["generation_id"], first)
+        real_replace = generation.os.replace
+        with patch.object(generation.os, "replace", side_effect=[PermissionError("locked"), None]) as replace:
+            # Exercise the retry without changing the valid pointer.
+            generation.replace_pointer(destination, generation.read_current(destination)[0])
+            self.assertEqual(replace.call_count, 2)
+        self.assertIs(generation.os.replace, real_replace)
+        from copy import deepcopy
+        for report_index, field, value in ((1, "career", "wrong"), (2, "scoring_model", {}),
+                                           (3, "formation", {}), (4, "eligibility_policy", {}),
+                                           (5, "baseline", {})):
+            changed = deepcopy(reports)
+            changed[report_index][field] = value
+            with self.assertRaises(ValueError):
+                generation.publish(destination, changed, evidence)
+        with self.assertRaises(ValueError):
+            generation.publish(destination, reports[:-1], evidence)
+        changed = deepcopy(reports)
+        changed[1]["players"].append(changed[1]["players"][0])
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            generation.publish(destination, changed, evidence)
+        changed = deepcopy(reports)
+        changed[1]["players"][0]["slots"][0]["ip"]["observed_role_suitability"] = 10
+        with self.assertRaisesRegex(ValueError, "Unsupported role"):
+            generation.publish(destination, changed, evidence)
+        changed = deepcopy(reports)
+        evaluated = next(c for c in changed[5]["candidates"] if c["depth"]["status"] == "evaluated")
+        evaluated["depth"]["same_original_starter_absences"][0]["baseline_without_player"] = {}
+        with self.assertRaisesRegex(ValueError, "Signing absence baseline mismatch"):
+            generation.publish(destination, changed, evidence)
+        self.assertEqual(generation.read_current(destination)[0]["generation_id"], first)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -301,6 +399,18 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("competition_inferred_from_fixtures_without_complete_tables", later["warnings"])
         self.assertEqual(later["provenance"]["reference_save_sha256"], first["provenance"]["reference_save_sha256"])
         self.assertTrue(any("reference_extracted_on_earlier_game_date" in c["warnings"] for c in later["comparisons"]))
+        evidence = {}
+        reports = bridge.build_reports(SimpleNamespace(db=self.dbpath, career=CAREER, formation=None), self.root, provenance=evidence)[:6]
+        destination = self.root / "touchline"
+        generation.publish(destination, reports, evidence)
+        published, _ = generation.read_current(destination)
+        self.assertEqual(published["benchmark"]["extraction_game_date"], DATE)
+        from copy import deepcopy
+        stale = deepcopy(reports)
+        stale[2]["extraction_game_date"] = "2026-10-01"
+        with self.assertRaisesRegex(ValueError, "Stale benchmark"):
+            generation.publish(destination, stale, evidence)
+        self.assertEqual(generation.read_current(destination)[0], published)
         self.game_date = "2027-02-01"
         self.process(benchmark_root=self.root, benchmark_names=names)
         self.render()

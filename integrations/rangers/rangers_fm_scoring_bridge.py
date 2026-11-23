@@ -104,7 +104,7 @@ def formation_path(root, explicit):
     return explicit.expanduser().resolve() if explicit is not None else root / "formations" / "default.toml"
 
 
-def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty=False):
+def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty=False, provenance=None):
     """Consistent SQLite snapshot; does not create or modify an absent DB."""
     if not dbpath.is_file():
         raise RuntimeError(f"Scoped watcher database does not exist: {dbpath}")
@@ -119,7 +119,8 @@ def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty
                 bound = con.execute("SELECT club_uid FROM career_club WHERE career=?", (career,)).fetchone()
             rows = con.execute("""
                 SELECT m.player_key, m.cohort, p.record_json, m.last_seen_game_date, m.source_export,
-                       s.game_date AS record_game_date, s.game_build
+                       s.game_date AS record_game_date, s.game_build, s.id AS record_snapshot_id,
+                       s.career AS snapshot_career, p.career AS record_career
                   FROM cohort_membership AS m
                   JOIN player_latest AS l
                     ON l.career=m.career AND l.player_key=m.player_key
@@ -128,6 +129,20 @@ def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty
                   JOIN snapshots AS s ON s.id=p.snapshot_id
                  WHERE m.career=? AND m.active=1
             """, (career,)).fetchall()
+            if provenance is not None:
+                active_count = con.execute("SELECT count(*) FROM cohort_membership WHERE career=? AND active=1", (career,)).fetchone()[0]
+                if len(rows) != active_count or any(r["snapshot_career"] != career or r["record_career"] != career for r in rows):
+                    raise ValueError("Missing or cross-career scoped player observation")
+                tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                chronology = con.execute("SELECT latest_game_date FROM career_chronology WHERE career=?", (career,)).fetchone() if "career_chronology" in tables else None
+                provenance.update(accepted_game_date=chronology[0] if chronology else None,
+                                  managed_club_uid=bound[0] if bound else None,
+                                  observations=[dict(r) for r in rows])
+                columns = {r[1] for r in con.execute("PRAGMA table_info(snapshots)")}
+                fields = ["id", "game_date", "source_sha256", "selection_sha256", "game_build"]
+                provenance["snapshots"] = [dict(r) for r in con.execute(
+                    "SELECT " + ",".join(fields) + " FROM snapshots WHERE career=? ORDER BY id", (career,)
+                )] if set(fields) <= columns else []
             if with_benchmark and con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_benchmark'").fetchone():
                 cached = con.execute("SELECT aggregate_json FROM career_benchmark WHERE career=?", (career,)).fetchone()
                 if cached:
@@ -140,6 +155,8 @@ def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty
         raise RuntimeError(f"Can't read expected scoped database tables in {dbpath}: {exc}") from exc
     if not rows and not allow_empty:
         raise RuntimeError(f"No active squad or targets for career {career!r}. Run the autosave watcher first.")
+    if provenance is not None:
+        provenance["benchmark_cache"] = benchmark
     people = {}
     date = None
     sources = set()
@@ -504,14 +521,14 @@ def render_html(data):
     return HTML.replace("__PAYLOAD__", raw)
 
 
-def sync_once(args, root):
+def build_reports(args, root, *, provenance=None):
     path = args.db.expanduser().resolve()
     model_bytes = (root / "weights" / "fm27v2.toml").read_bytes()
     weights = tomllib.loads(model_bytes.decode("utf-8"))
     formation_module = load_checkout_module(root, "formation.py", "Tactical formation")
     selected_formation = formation_path(root, getattr(args, "formation", None))
     formation = formation_module.load_formation(selected_formation, weights)
-    people, date, sources, benchmark_cache = get_database(path, args.career, with_benchmark=True, allow_empty=True)
+    people, date, sources, benchmark_cache = get_database(path, args.career, with_benchmark=True, allow_empty=True, provenance=provenance)
     scorer = load_weighted(root)
     scored_people(people, weights, scorer=scorer)
     tactical_module = load_checkout_module(root, "tactical_assessment.py", "Tactical assessment")
@@ -535,6 +552,11 @@ def sync_once(args, root):
     signing = signing_module.build_signing_simulations(formation, assessment, benchmark, optimizer=xi_module,
         depth_module=depth_module, policy=policy, baseline=xi, baseline_depth=depth,
         depth_limit=getattr(args, "signing_depth_limit", signing_module.DEFAULT_DEPTH_LIMIT), observations=observations)
+    return formation, assessment, benchmark, xi, depth, signing, people, date, sources, weights, xi_module, depth_module, signing_module
+
+
+def sync_once(args, root):
+    formation, assessment, benchmark, xi, depth, signing, people, date, sources, weights, xi_module, depth_module, signing_module = build_reports(args, root)
     outdir = root / "out" / args.slug
     # Publish the honest partial XI even if the legacy renderer cannot score
     # a goalkeeper or has no active squad. Legacy failure semantics remain.
@@ -614,6 +636,7 @@ def main(argv=None):
     ap.add_argument("--watch", action="store_true", help="Refresh continuously when SQLite database changes")
     ap.add_argument("--interval", type=float, default=15, help="Watch polling interval in seconds")
     ap.add_argument("--open", action="store_true", help="Open the dashboard in the default browser")
+    ap.add_argument("--publish-generation", type=Path, help="Publish only a verified Touchline generation to a separate directory")
     args = ap.parse_args(argv)
     if args.interval <= 0:
         ap.error("--interval must be positive")
@@ -623,6 +646,18 @@ def main(argv=None):
         ap.error("--slug must be a simple directory name")
     root = find_root(args.fm_scoring_root)
     args.formation = formation_path(root, args.formation)
+    if args.publish_generation:
+        if args.watch or args.open:
+            ap.error("--publish-generation is a standalone one-shot operation")
+        destination = args.publish_generation.resolve()
+        if destination == root or any(destination == p or p in destination.parents for p in
+               (root / "saves", root / "out", args.db.resolve())):
+            ap.error("Choose a separate generation directory outside operational output and database directories")
+        publisher = load_checkout_module(root, "touchline_generation.py", "Touchline generation")
+        provenance = {}
+        reports = build_reports(args, root, provenance=provenance)[:6]
+        log(str(publisher.publish(destination, reports, provenance)))
+        return 0
     db = args.db.expanduser().resolve()
     weights = root / "weights" / "fm27v2.toml"
     if not args.watch:
