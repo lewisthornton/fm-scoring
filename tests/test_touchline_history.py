@@ -62,6 +62,8 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(self.targets), 2)
         self.assertEqual(len(self.manifest["source"]["members"]), 125)
         versions = generation.read_history(self.root / "generations" / self.first, self.manifest)
+        alias = self.root / "generations" / self.first / ".." / self.first
+        self.assertEqual(generation.read_history(alias, self.manifest), versions)
         counts = [sum(o["snapshot_id"] == sid for p in versions.values() for o in p["observations"]) for sid in (1, 2)]
         self.assertEqual(counts, [45, 80])
         first = self.store.data("history", self.first, player=self.defender)["data"]

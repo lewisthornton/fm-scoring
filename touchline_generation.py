@@ -352,8 +352,10 @@ def read_history(directory, manifest):
     """Old M1 manifests have no history; never attach a later artifact to them."""
     if "history" not in manifest:
         return None
-    path = Path(directory) / HISTORY_FILE
-    require(path.resolve() == path.absolute(), "Invalid history artifact path")
+    # Normalize the trusted generation directory first (Windows may expand
+    # an 8.3 parent directory alias). The artifact itself must not redirect.
+    path = Path(directory).resolve() / HISTORY_FILE
+    require(path.resolve() == path, "Invalid history artifact path")
     return history_index(manifest, path.read_bytes())
 
 
