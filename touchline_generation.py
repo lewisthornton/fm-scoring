@@ -13,6 +13,12 @@ from pathlib import Path
 FILES = ("formation.json", "tactical_assessments.json", "league_benchmarks.json",
          "optimal_xi.json", "squad_depth.json", "signing_simulations.json")
 VERSION = 1
+HISTORY_FILE = "player_history.json"
+HISTORY_VERSION = 1
+PROFILE_FIELDS = ("uid", "unique_id", "name", "birth_date", "age", "club_uid", "club_name",
+                  "contract_wage", "contract_start", "contract_end", "contract_squad_status",
+                  "on_loan", "loan_parent_club_uid", "loan_parent_club_name", "loan_end",
+                  "left_foot", "right_foot", "natural_positions", "accomplished_positions")
 
 
 def digest(data):
@@ -276,6 +282,83 @@ def source_identity(provenance, career):
             "benchmark_cache_sha256": digest(canonical(provenance["benchmark_cache"])) if provenance["benchmark_cache"] is not None else None}
 
 
+def history_index(manifest, body):
+    """Validate detached, generation-bound raw version evidence, never query SQLite."""
+    meta = manifest["history"]
+    require(type(meta["version"]) is int and meta["version"] == HISTORY_VERSION and type(meta["bytes"]) is int and meta["bytes"] == len(body)
+            and meta["sha256"] == digest(body), "History integrity mismatch")
+    data = decode(body)
+    require(type(data["version"]) is int and data["version"] == HISTORY_VERSION and data["career"] == manifest["career"]
+            and data["generation_id"] == manifest["generation_id"]
+            and data["source_sha256"] == manifest["source_sha256"], "History identity mismatch")
+    career = manifest["career"]
+    source = manifest["source"]
+    snapshots = index(source["snapshots"], lambda r: r["id"])
+    def pid(key):
+        require(isinstance(key, str) and bool(key), "Invalid historical player key")
+        return json.dumps(["rangers", career, key], ensure_ascii=False, separators=(",", ":"))
+    versions = index(data["versions"], lambda r: (r["player_key"], r["snapshot_id"]))
+    counts = index(data["snapshot_counts"], lambda r: r["id"])
+    require(set(counts) == set(snapshots), "Incomplete historical snapshot counts")
+    actual_counts = dict.fromkeys(snapshots, 0)
+    players = {}
+    for (key, sid), row in versions.items():
+        snapshot = snapshots.get(sid)
+        require(snapshot is not None and row["snapshot_career"] == career, "Broken historical snapshot relationship")
+        require(digest(row["record_json"].encode("utf-8")) == row["record_hash"], "Historical record hash mismatch")
+        record = decode(row["record_json"])
+        require(isinstance(record, dict), "Invalid historical record")
+        identity = "|".join((record["uid"], record.get("unique_id") or "", record.get("birth_date") or ""))
+        require(identity == key, "Historical player identity mismatch")
+        actual_counts[sid] += 1
+        observation = {"player_id": pid(key), "career": career, "snapshot_id": sid, "game_date": snapshot["game_date"],
+                       "imported_utc": row["imported_utc"], "game_build": snapshot["game_build"],
+                       "record_sha256": row["record_hash"], "source_sha256": snapshot["source_sha256"],
+                       "selection_fingerprint_status": selection_fingerprint_status(snapshot["selection_sha256"]),
+                       "record": record,
+                       "field_states": {field: "recorded" if record.get(field) not in (None, "") else "not_recorded"
+                                        for field in PROFILE_FIELDS},
+                       "absent_record_field_state": "not_recorded",
+                       "unsupported_evidence": ["observed_role_suitability", "historical_cohort_membership",
+                                                "injury_history", "confirmed_transfer_events"]}
+        players.setdefault(pid(key), {"observations": [], "membership": []})["observations"].append(observation)
+    require(all(actual_counts[sid] == counts[sid]["changed_count"] for sid in counts), "Historical snapshot record count mismatch")
+    latest = index(data["latest"], lambda r: r["player_key"])
+    require(set(latest) == {key for key, _ in versions}, "Incomplete historical latest records")
+    for key, row in latest.items():
+        observations = players[pid(key)]["observations"]
+        last = observations[-1]
+        require(last["snapshot_id"] == row["snapshot_id"] and last["record_sha256"] == row["record_hash"], "Historical latest mismatch")
+    members = index(data["membership"], lambda r: (r["player_key"], r["cohort"]))
+    active = {}
+    for (key, cohort), row in members.items():
+        require(key in latest and cohort in ("squad", "target") and row["active"] in (0, 1), "Invalid historical membership")
+        stamp = row["last_seen_game_date"]
+        if stamp:
+            date.fromisoformat(stamp)
+            require(source["accepted_game_date"] is None or stamp <= source["accepted_game_date"], "Membership after chronology")
+        players[pid(key)]["membership"].append({"cohort": cohort, "active": bool(row["active"]), "last_seen_game_date": stamp})
+        if row["active"]:
+            active[pid(key), cohort] = row
+    require(set(active) == {(r["player_id"], r["cohort"]) for r in source["members"]}, "Historical active cohort mismatch")
+    for row in source["members"]:
+        last = players[row["player_id"]]["observations"][-1]
+        require(last["snapshot_id"] == row["record_snapshot_id"] and last["record_sha256"] == row["record_sha256"]
+                and active[row["player_id"], row["cohort"]]["last_seen_game_date"] == row["last_seen_game_date"], "History/report observation mismatch")
+    return players
+
+
+def read_history(directory, manifest):
+    """Old M1 manifests have no history; never attach a later artifact to them."""
+    if "history" not in manifest:
+        return None
+    # Normalize the trusted generation directory first (Windows may expand
+    # an 8.3 parent directory alias). The artifact itself must not redirect.
+    path = Path(directory).resolve() / HISTORY_FILE
+    require(path.resolve() == path, "Invalid history artifact path")
+    return history_index(manifest, path.read_bytes())
+
+
 def replace_pointer(root, manifest):
     pointer = {"version": VERSION, "generation_id": manifest["generation_id"], "manifest_sha256": digest(canonical(manifest))}
     fd, name = tempfile.mkstemp(prefix=".current-", dir=root)
@@ -319,6 +402,12 @@ def publish(root, reports, provenance):
                     "source_sha256": digest(canonical(source)), "cohort_sha256": digest(canonical([[r["player_id"], r["cohort"]] for r in source["members"]])), "configuration": config,
                     "benchmark": benchmark_identity(b),
                     "files": files}
+        if "history" in provenance:
+            body = canonical({**provenance["history"], "version": HISTORY_VERSION, "career": a["career"],
+                              "generation_id": generation_id, "source_sha256": manifest["source_sha256"]})
+            manifest["history"] = {"version": HISTORY_VERSION, "sha256": digest(body), "bytes": len(body)}
+            (stage / HISTORY_FILE).write_bytes(body)
+            read_history(stage.resolve(), manifest)
         (stage / "manifest.json").write_bytes(canonical(manifest))
         read_generation(stage)
         os.rename(stage, generations / generation_id)

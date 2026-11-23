@@ -38,6 +38,11 @@ def benchmark(root, squad, targets):
         before, baseline_ms = measure(lambda: json.dumps(uncached.data(route, first, **kwargs), ensure_ascii=False, separators=(",", ":")).encode())
         assert body == before
         result[route] = {"uncached_ms": baseline_ms, "cached_ms": latency, "bytes": len(body)}
+    result["history_artifact_bytes"] = (root / "generations" / first / generation.HISTORY_FILE).stat().st_size
+    for route in ("profile", "history", "benchmark"):
+        body, latency = measure(lambda: generation.canonical(store.data(route, first, player=candidate["player_id"])))
+        assert len(body) <= 512 * 1024
+        result[route] = {"median_ms": latency, "bytes": len(body)}
     _, result["switch_ms"] = measure(lambda: store.data("overview", second))
     tracemalloc.start()
     probe = Store(root, CAREER)
