@@ -1,0 +1,40 @@
+name: Touchline frontend
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: touchline/package-lock.json
+      - name: Build and unit test
+        working-directory: touchline
+        run: |
+          npm ci
+          npm run build
+          npm test
+      - name: Python-only production runtime smoke
+        run: python tests/touchline_runtime_smoke.py
+      - name: Install browser
+        working-directory: touchline
+        run: npx playwright install --with-deps chromium
+      - name: Browser workflow and accessibility
+        working-directory: touchline
+        run: npm run browser
+      - name: Upload visual and performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchline-browser-evidence
+          path: touchline/test-results/
+          if-no-files-found: warn
