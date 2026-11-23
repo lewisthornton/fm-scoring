@@ -26,7 +26,7 @@ def main():
         env = os.environ.copy()
         env["PATH"] = str(Path(sys.executable).parent)
         if os.name == "nt":
-            env["PATH"] += os.pathsep + str(Path(env["SystemRoot"]) / "System32")
+            env["PATH"] += os.pathsep + str(Path(os.environ["SystemRoot"]) / "System32")
             help_result = subprocess.run([env["COMSPEC"], "/d", "/c", "call", str(checkout / "launch-touchline.cmd"), "--help"],
                                          env=env, capture_output=True, text=True, timeout=20)
             assert help_result.returncode == 0 and "--generations" in help_result.stdout, help_result

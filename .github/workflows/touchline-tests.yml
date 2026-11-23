@@ -51,6 +51,7 @@ jobs:
             touchline/benchmark-evidence/
           if-no-files-found: warn
       - name: Upload production frontend
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: touchline-production-dist
