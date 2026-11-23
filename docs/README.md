@@ -1,6 +1,6 @@
 # Docs
 
-- Touchline: [M1a generation contracts](touchline-m1a.md), [M1b preview](touchline-m1b.md), [M1c deployment](touchline-m1c.md), [M1 closure](touchline-m1-closure.md), [M2a historical evidence contracts](touchline-m2a.md).
+- Touchline: [M1a generation contracts](touchline-m1a.md), [M1b preview](touchline-m1b.md), [M1c deployment](touchline-m1c.md), [M1 closure](touchline-m1-closure.md), [M2a historical evidence contracts](touchline-m2a.md), [M2b squad experience and acceptance gates](touchline-m2b.md).
 
 - `训练excel Training excel.xlsx`: FM training spreadsheet by harvestgreen22 on [FM-Arena](https://fm-arena.com/). Kept here as a reference for future development; all credit to its author.
 - `Harvestgreen training.pptx` / `.pdf`: slides explaining harvestgreen22's training test, then my own FM27 test of tactical training setups, compared with other people's results.
