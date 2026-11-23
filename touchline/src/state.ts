@@ -10,13 +10,15 @@ export function routeFrom(hash: string): Route {
 export function routeTo(route: Route) {
   return "#" + new URLSearchParams({page: route.page, generation: route.generation, slot: route.slot, player: route.player, impact: route.impact ? "1" : "0"}).toString();
 }
-export function switchGeneration(route: Route, generation: string, slots: string[], players: string[], candidates: string[]) {
-  const slotLost = !!route.slot && !slots.includes(route.slot);
-  const playerLost = !!route.player && !players.includes(route.player);
+export function switchGeneration(route: Route, generation: string, slots: string[], players: string[], candidates: string[], squad=players, assignedPlayerSlot?:string|null) {
+  const assignmentLost=assignedPlayerSlot===null;
+  const selectedSlot=assignedPlayerSlot??route.slot;
+  const slotLost = !!selectedSlot && !slots.includes(selectedSlot);
+  const playerLost = !!route.player && (assignmentLost||!(route.page==="Squad"?squad:players).includes(route.player));
   const candidateLost = !!route.player && !candidates.includes(route.player) && route.page === "Recruitment";
-  return {route: {...route, generation, slot: slotLost ? "" : route.slot, player: playerLost || candidateLost ? "" : route.player,
-    impact: !slotLost && !playerLost && !candidateLost && route.impact, page: slotLost ? "Tactics & XI" as const : route.page},
-    notice: [slotLost && "Selected slot no longer exists; returned to tactical overview.", (playerLost || candidateLost) && "Selected player is no longer in this context."].filter(Boolean).join(" ")};
+  return {route: {...route, generation, slot: slotLost||assignmentLost ? "" : selectedSlot, player: playerLost || candidateLost ? "" : route.player,
+    impact: !slotLost && !playerLost && !candidateLost && route.impact, page: slotLost && route.page!=="Squad" ? "Tactics & XI" as const : route.page},
+    notice: [slotLost && (route.page==="Squad"?"Selected slot no longer exists; selection cleared.":"Selected slot no longer exists; returned to tactical overview."), (playerLost || candidateLost) && "Selected player is no longer in this context."].filter(Boolean).join(" ")};
 }
 export function filterCandidates<T extends {player_id:string; eligible:boolean}>(rows:T[], names:Record<string,string>, query:string, eligibleOnly:boolean) {
   return rows.filter(row => (!eligibleOnly || row.eligible) && (names[row.player_id] || "").toLowerCase().includes(query.toLowerCase()));

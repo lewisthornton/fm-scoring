@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {filterCandidates, routeFrom, routeTo, switchGeneration, type Route} from "./state";
 import {AppShell, Panel, Tag, StateMessage, PlayerAction} from "./components";
+import {SquadDirectory} from "./SquadDirectory";
 import type {Assignment, Candidate, Change, Envelope, Evidence, Overview, Player, Provenance, Signing, SigningDepthDetails, Slot, SlotData, Totals} from "./types";
 import "./style.css";
 
@@ -130,7 +131,17 @@ function App() {
   const players=useMemo(()=>new Map(data?.players.map(p=>[p.player_id,p])??[]),[data]);
   async function accept(){
     if(!current)return;const gid=current.generation_id;setSwitching(true);
-    try{const loaded=await api<Envelope<Overview>>("overview",{generation:gid});if(latestRoute.current.generation!==route.generation)return;const next=switchGeneration(latestRoute.current,gid,loaded.data.slots.map(s=>s.id),loaded.data.players.map(p=>p.player_id),loaded.data.recommendations.map(r=>r.player_id));setNotice(next.notice);go(next.route); }
+    try{
+      const loaded=await api<Envelope<Overview>>("overview",{generation:gid});
+      if(latestRoute.current.generation!==route.generation)return;
+      const selected=latestRoute.current;
+      // Follow a player-specific tactical link only when it matched the previous
+      // published assignment; ordinary tactical slot navigation remains slot-based.
+      const assignedLink=selected.page==="Tactics & XI"&&selected.player&&data?.baseline.some(a=>a.player_id===selected.player&&a.slot_id===selected.slot);
+      const nextSlot=assignedLink?(loaded.data.baseline.find(a=>a.player_id===selected.player)?.slot_id??null):undefined;
+      const next=switchGeneration(selected,gid,loaded.data.slots.map(s=>s.id),loaded.data.players.map(p=>p.player_id),loaded.data.recommendations.map(r=>r.player_id),loaded.data.players.filter(p=>p.cohorts.includes("squad")).map(p=>p.player_id),nextSlot);
+      setNotice(next.notice);go(next.route);
+    }
     catch(e){setNotice("Could not switch: "+(e as Error).message);}finally{setSwitching(false);}
   }
   const context=meta?.generation_id===route.generation?meta:null;
@@ -140,7 +151,7 @@ function App() {
       {notice&&<div className="notice" role="status">{notice}</div>}
       {pinnedError||overview.error?<Panel title="Pinned generation unavailable"><StateMessage kind="error" action={<button onClick={()=>location.reload()}>Retry pinned generation</button>}>{pinnedError||overview.error}. No replacement has been selected.</StateMessage></Panel>:!available?<Panel title="Waiting for validated generation"><StateMessage kind={currentError?"unavailable":"loading"} action={currentError&&<button onClick={()=>location.reload()}>Retry current generation</button>}>{currentError? "Publish a valid generation and retry.":"Loading local analysis…"}</StateMessage></Panel>:<>
         <div className="context-strip"><span>Generated {context?.generated_utc??"—"}</span><span>Eligibility: {context?.configuration.eligibility_policy.mode??"—"}</span><span>Benchmark: {context?.benchmark.status??"—"} {context?.benchmark.extraction_game_date??""}</span></div>
-        {route.page==="Overview"?<OverviewPage data={data} players={players} go={go}/>:route.page==="Tactics & XI"?<Tactics data={data} players={players} route={route} go={go}/>:route.page==="Recruitment"?<Recruitment data={data} players={players} route={route} go={go}/>:route.page==="Data & Settings"?<Panel title="Generation evidence"><p>Operational fm27v2 only. Experimental role models are unavailable for real-save use.</p><pre>{JSON.stringify(context,null,2)}</pre>{Object.entries(data.limitations).map(([key,values])=><section key={key}><h3>{human(key)}</h3><ul>{values.map(v=><li key={v}>{v}</li>)}</ul></section>)}</Panel>:<Panel title={route.page}><StateMessage kind="unavailable" action={<button onClick={()=>go({page:"Overview"})}>Return to overview</button>}>This workspace is not implemented yet. Existing tactical and recruitment analysis remains available.</StateMessage></Panel>}
+        {route.page==="Squad"?<SquadDirectory key={route.generation} data={data} go={go}/>:route.page==="Overview"?<OverviewPage data={data} players={players} go={go}/>:route.page==="Tactics & XI"?<Tactics data={data} players={players} route={route} go={go}/>:route.page==="Recruitment"?<Recruitment data={data} players={players} route={route} go={go}/>:route.page==="Data & Settings"?<Panel title="Generation evidence"><p>Operational fm27v2 only. Experimental role models are unavailable for real-save use.</p><pre>{JSON.stringify(context,null,2)}</pre>{Object.entries(data.limitations).map(([key,values])=><section key={key}><h3>{human(key)}</h3><ul>{values.map(v=><li key={v}>{v}</li>)}</ul></section>)}</Panel>:<Panel title={route.page}><StateMessage kind="unavailable" action={<button onClick={()=>go({page:"Overview"})}>Return to overview</button>}>This workspace is not implemented yet. Existing tactical and recruitment analysis remains available.</StateMessage></Panel>}
       </>}</AppShell>;
 }
 

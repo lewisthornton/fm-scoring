@@ -5,7 +5,9 @@
 Turn the existing decision centre into a connected club intelligence workspace.
 The target is a manager reviewing a selection concern, comparing internal
 alternatives, examining a player's evidence, and deciding whether to recruit.
-The approved implementation boundary is **M2b.1 only**.
+The original approved implementation boundary was **M2b.1 only**.
+PR #29 merged that foundation; the current implementation boundary is
+**M2b.2 only**. Later gates remain independently reviewed and deferred.
 
 Audit base: PR #28 (45acd2f). The React/TypeScript client is a small
 dependency-light app: main.tsx owns views, async queries and route state;
@@ -132,3 +134,77 @@ invented fixture; browser evidence is uploaded by the existing CI workflow.
 - Firefox/WebKit, the real Windows runner, and independent/physical Windows
   acceptance remain separate checks; do not interpret Linux smoke tests or
   automated axe checks as full accessibility or Windows certification.
+
+## M2b.2 — Squad directory implementation
+
+Audit base: `a69c5bc` (merged PR #29). `touchline_server.py:player_card`
+already supplies the necessary directory fields from the validated tactical
+assessment. The generation validator checks canonical player/member sets and
+last-seen dates; the overview supplies the canonical baseline assignments
+and slot labels. The directory is a frontend-only consumer of this existing
+generation-pinned overview. It neither queries the database nor fetches
+individual profiles/history in bulk. No report or endpoint changes.
+
+| Directory evidence | Source and definition |
+| --- | --- |
+| Active squad | Unique canonical overview players whose `cohorts` contains `squad`; not ownership, first-team registration or proof of a complete real-world roster. |
+| Known availability | Active squad rows with `availability` equal to `available` or `unavailable`; the bridge derives this from club and loan evidence, not injury, fitness, suspension or registration. |
+| Unknown availability | Remaining active squad rows; unknown is neither available nor unavailable. |
+| Assigned in XI | Active squad players with a non-vacant published `baseline` assignment joined by `player_id` and `slot_id`; calculated, not actual match selection. |
+| Player and club | `display_name`, `club`; internal row/navigation identity is `player_id`; missing club is labelled. Namesakes show the canonical identity. |
+| Cohorts | All active `cohorts` on the card, including overlap with `target`; overlap does not duplicate rows or counts. |
+| Analysis domain | Published `keeper` classification (GK rating at least 18, or fallback natural-position text); false can include missing GK evidence. This is an analysis domain, not observed outfield ability or tactical eligibility. No granular position ratings in `player_card`, so no granular position filter or positional-depth claim. |
+| Availability and loan | `availability` and `loan_state` from the card; no inferred contract or fitness state. |
+| Observation date | `record_game_date` of the stored latest record; `last_seen_game_date` is separate membership evidence, the maximum across the player's active cohorts. Neither is an import timestamp, current chronology, nor publication date. |
+
+Search is case-insensitive and whitespace-trimmed, with name, availability
+and published keeper/outfield domain filters combined. Column sorting is deterministic
+in both directions with missing text/dates last and canonical ID as the
+ascending tie-breaker. Reset restores name ascending and all filters. The
+directory displays a live result count and 25 rows per page. Empty active
+squad membership, no matching rows and a generation unavailable at the
+server are separate states. Missing granular position evidence is disclosed;
+the directory does not count unobserved ratings as zero or invent positions.
+
+Only players with an existing baseline XI assignment have a player action:
+it opens the exact tactical slot with the canonical player ID and pinned
+generation in the hash. Unassigned players have no profile destination yet.
+Browser Back/Forward and reload use existing hash navigation. Filters are
+local presentation state and reset on remount/generation change. Explicit
+switching validates the destination overview before navigation, follows the
+same assigned-player identity to its new baseline slot (or clears the link), clears
+selections outside the active squad when on Squad, and leaves the user in
+the Squad workspace if a slot disappeared. A new pointer does not change
+the displayed rows. Absence from a subsequent cohort is not evidence of a
+transfer or release. The existing accepted chronology and publication
+provenance remain distinct from the displayed record and membership dates.
+
+### M2b.2 verification and acceptance
+
+- Python unittest discovery: 217 passed on Linux, invented data only.
+- Frontend state tests: 8 passed; production TypeScript/Vite build passed.
+- Linux Python-only production runtime and launcher smoke: passed, including
+  Node absent from runtime PATH, duplicate launch refusal and clean shutdown.
+- Local bundled Chromium: all 7 browser tests passed (including the small
+  performance fixture and the existing workflow/regression checks). At all four
+  directory widths, no page-level horizontal overflow and no reported axe
+  WCAG 2 A/AA violations. Keyboard activation, sort state, filters, reload,
+  Back and explicit generation switch were exercised. System Chromium could
+  not start under the host's process/socket restrictions; the bundled browser
+  succeeded. Local Firefox/WebKit were not available.
+- Browser evidence is produced by `workflow.spec.ts` and uploaded by the
+  existing `touchline-browser-evidence` CI artifact. The new test captures
+  Squad at 1440/1280/768/390 and filtered/no-match states at 1440/390.
+  Since the watcher rejects an empty squad import, the defensive empty
+  directory UI test intercepts the invented overview response with an
+  explicitly synthetic empty projection; it is not evidence of a successful
+  empty-squad publication. It separately exercises an unavailable pinned ID.
+  Additional browser coverage switches between two genuinely published
+  fixture generations and checks that overlapping cohort evidence changes
+  only after explicit acceptance, with Back restoring the pinned evidence.
+- Physical Windows acceptance, independent review and final CI verification
+  remain outstanding. M2b.2 is not formally closed by implementation alone.
+
+Excluded: profile/history/benchmark drill-down, granular positional evidence
+contracts, new analytics, scoring or solver changes, watcher, launcher,
+persistence, dependency and league/staff workspace changes.

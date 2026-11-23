@@ -24,7 +24,7 @@ export function StateMessage({kind,children,action}:React.PropsWithChildren<{
 }
 
 const descriptions:Partial<Record<Route["page"],string>>={
-  Squad:"Planned · M2b.2", Analysis:"Planned · M2c", Staff:"Not yet available"
+  Analysis:"Planned · M2c", Staff:"Not yet available"
 };
 export function AppShell({route,context,currentError,onNavigate,children}:React.PropsWithChildren<{
   route:Route;context:Provenance|null;currentError:string;onNavigate:(page:Route["page"])=>void
@@ -35,7 +35,7 @@ export function AppShell({route,context,currentError,onNavigate,children}:React.
       <div className="brand"><span className="logo" aria-hidden="true">T</span><div><b>Touchline</b><small>FOOTBALL INTELLIGENCE</small></div></div>
       <div className="career"><small>ACTIVE CAREER</small><b>{context?.career??"Local career"}</b><span>Operational analysis</span></div>
       <nav aria-label="Workspaces"><span className="nav-label">WORKSPACES</span>{pages.map((page,i)=><button key={page} aria-current={route.page===page?"page":undefined} className={route.page===page?"nav-active":""} onClick={()=>onNavigate(page)}><span aria-hidden="true">{["◈","▦","▧","◎","▤","♙","⚙"][i]}</span><span className="nav-text">{page}{descriptions[page]&&<small>{descriptions[page]}</small>}</span></button>)}</nav>
-      <div className="sidefoot"><span className="dot"/> Local · read only<br/><small>Touchline / M2b.1</small></div>
+      <div className="sidefoot"><span className="dot"/> Local · read only<br/><small>Touchline / M2b.2</small></div>
     </aside>
     <div className="workspace">
       <header className="topbar" aria-label="Pinned analysis context">
