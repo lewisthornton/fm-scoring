@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {filterCandidates, pages, routeFrom, routeTo, switchGeneration, type Route} from "./state";
-import type {Assignment, Candidate, Change, Envelope, Evidence, Overview, Player, Provenance, Signing, Slot, SlotData, Totals} from "./types";
+import type {Assignment, Candidate, Change, Envelope, Evidence, Overview, Player, Provenance, Signing, SigningDepthDetails, Slot, SlotData, Totals} from "./types";
 import "./style.css";
 
 type Status = {generation_id:string; provenance:Provenance};
@@ -83,10 +83,13 @@ function Tactics({data,players,route,go}: {data:Overview;players:Map<string,Play
       <button className="primary" onClick={()=>go({page:"Recruitment",slot:selected.slot.id,impact:false})}>Find recruitment candidates →</button></>}</Panel></div></>;
 }
 function SigningImpact({signing,data,players}: {signing:Signing;data:Overview;players:Map<string,Player>}) {
+  const depth:SigningDepthDetails=signing.depth as Signing["depth"] & SigningDepthDetails;
   return <><h3>Hypothetical completed signing · {nameOf(players,signing.player_id)}</h3><p className="notice">Availability assumed; interest, affordability, registration and fitness are not established. Attribute-quality scores are not predicted goals, wins or points.</p><Tag>{human(signing.classification)}</Tag>
     {signing.xi?<><p>{signing.xi.enters_xi?"Enters the XI at "+slotOf(data.slots,signing.xi.selected_slot_id):"Does not enter the optimal XI"}.</p><div className="grid"><TotalsView totals={signing.xi.baseline} label="Baseline"/><TotalsView totals={signing.xi.hypothetical} label="Hypothetical XI"/></div><p>Change in completeness: {signing.xi.impact.filled_slot_gain} · outfield gain {num(signing.xi.impact.outfield_score_gain)} · GK gain {num(signing.xi.impact.goalkeeper_score_gain)} {signing.xi.impact.tie_break_only&&"· tie-break only"}</p>
     <Changes changes={signing.xi.impact.changes} slots={data.slots} players={players}/><p>Displaced: {signing.xi.impact.newly_benched_player_ids.map(id=>nameOf(players,id)).join(", ")||"None"}.</p><p>Reassigned: {signing.xi.impact.moved_starters.map(r=>nameOf(players,r.player_id)+" "+slotOf(data.slots,r.from_slot_id)+" → "+slotOf(data.slots,r.to_slot_id)).join("; ")||"None"}.</p><p>Newly filled: {signing.xi.impact.newly_filled_slot_ids.map(id=>slotOf(data.slots,id)).join(", ")||"None"} · Remaining vacancies: {signing.xi.impact.vacant_slot_ids.map(id=>slotOf(data.slots,id)).join(", ")||"None"}</p><div className="grid"><section><h3>Baseline XI</h3><AssignmentTable slots={data.slots} rows={data.baseline} players={players}/></section><section><h3>Revised XI</h3><AssignmentTable slots={data.slots} rows={signing.xi.assignments} players={players}/></section></div></>:<p>No hypothetical signing scenario: already in squad.</p>}
-    <h3>Squad-depth effects</h3><Tag>{human(signing.depth.status)}</Tag>{signing.depth.status==="evaluated"?<><p>Bench matching capacity: {signing.depth.bench_capacity_before} → {signing.depth.bench_capacity_after}</p>{signing.depth.coverage_changes?.map(r=><p key={r.slot_id}>{slotOf(data.slots,r.slot_id)}: {r.before_direct_ids.length} → {r.after_direct_ids.length} direct deputies</p>)}{signing.depth.same_original_starter_absences?.map(r=><p key={r.removed_player_id}>Without {nameOf(players,r.removed_player_id)}: filled-slot gain {r.impact.filled_slot_gain}; outfield {num(r.impact.outfield_score_gain)}; GK {num(r.impact.goalkeeper_score_gain)}</p>)}</>:<p>{signing.depth.status==="not_evaluated_limit"?"Detailed depth was not evaluated within the configured limit; no conclusion about depth improvement.":"Detailed depth not applicable to this candidate."}</p>}</>;
+    <h3>Squad-depth effects</h3><Tag>{human(signing.depth.status)}</Tag>{signing.depth.status==="evaluated"?<><p>Bench matching capacity: {signing.depth.bench_capacity_before} → {signing.depth.bench_capacity_after}</p>{signing.depth.coverage_changes?.map(r=><p key={r.slot_id}>{slotOf(data.slots,r.slot_id)}: {r.before_direct_ids.length} → {r.after_direct_ids.length} direct deputies</p>)}{signing.depth.same_original_starter_absences?.map(r=><p key={r.removed_player_id}>Without {nameOf(players,r.removed_player_id)}: filled-slot gain {r.impact.filled_slot_gain}; outfield {num(r.impact.outfield_score_gain)}; GK {num(r.impact.goalkeeper_score_gain)}</p>)}
+    <details><summary>Shared-deputy and dependency effects</summary>{depth.shared_pair_capacity?.map(r=><p key={r.slot_ids.join(",")}>{r.slot_ids.map(id=>slotOf(data.slots,id)).join(" / ")}: simultaneous cover {r.before_capacity} → {r.after_capacity}</p>)}{depth.relieved_sole_cover_dependencies?.map(r=><p key={r.player_id+r.slot_id}>{nameOf(players,r.player_id)} no longer sole cover for {slotOf(data.slots,r.slot_id)}.</p>)}{depth.common_bench_dependency_changes?.map(r=><p key={r.player_id}>{nameOf(players,r.player_id)} · loss of capacity if unavailable: {r.capacity_loss_before} → {r.capacity_loss_after}</p>)}</details></>:<p>{signing.depth.status==="not_evaluated_limit"?"Detailed depth was not evaluated within the configured limit; no conclusion about depth improvement.":"Detailed depth not applicable to this candidate."}</p>}
+    <details><summary>Scenario assumptions and source limitations</summary><ul>{Object.entries(signing.assumptions).map(([key,value])=><li key={key}>{human(key)}: {value?"Yes":"No"}</li>)}</ul></details></>;
 }
 function Recruitment({data,players,route,go}: {data:Overview;players:Map<string,Player>;route:Route;go:(r:Partial<Route>)=>void}) {
   const [query,setQuery]=useState(""),[eligibleOnly,setEligibleOnly]=useState(false);
@@ -114,7 +117,7 @@ function App() {
   useEffect(()=>{
     let cancelled=false;
     async function poll(){
-      try {const value=await api<Status>("current");if(cancelled)return;setCurrent(value);setCurrentError("");if(!route.generation)go({generation:value.generation_id},true);}
+      try {const value=await api<Status>("current");if(cancelled)return;setCurrent(value);setCurrentError("");if(!latestRoute.current.generation){const next={...latestRoute.current,generation:value.generation_id};history.replaceState(null,"",routeTo(next));setRoute(next);}}
       catch(e){if(!cancelled){setCurrentError((e as Error).message);setCurrent(null);}}
       if(route.generation)try {const value=await api<Status>("generation",{generation:route.generation});if(!cancelled){setMeta(value.provenance);setPinnedError("");}}
       catch(e){if(!cancelled)setPinnedError((e as Error).message);}
