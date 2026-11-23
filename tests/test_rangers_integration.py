@@ -83,6 +83,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(generation.read_current(destination)[0], first)
         generation.rollback(destination, second["generation_id"])
         second_dir = destination / "generations" / second["generation_id"]
+        manifest_path = second_dir / "manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+        manifest_path.write_bytes(manifest_bytes + b"\n")
+        with self.assertRaisesRegex(ValueError, "Noncanonical"):
+            generation.rollback(destination, second["generation_id"])
+        manifest_path.write_bytes(manifest_bytes)
         damaged = second_dir / generation.FILES[0]
         original = damaged.read_bytes()
         damaged.write_bytes(b"{")
@@ -95,8 +101,6 @@ class IntegrationTests(unittest.TestCase):
         damaged.write_bytes(original)
         self.assertEqual(generation.read_current(destination)[0], second)
         # A matching file hash must not make malformed JSON acceptable.
-        manifest_path = second_dir / "manifest.json"
-        manifest_bytes = manifest_path.read_bytes()
         damaged.write_bytes(b"{")
         second["files"][generation.FILES[0]].update(bytes=1, sha256=generation.digest(b"{"))
         manifest_path.write_bytes(generation.canonical(second))
@@ -139,6 +143,11 @@ class IntegrationTests(unittest.TestCase):
         changed = deepcopy(reports)
         changed[1]["players"][0]["slots"][0]["ip"]["observed_role_suitability"] = 10
         with self.assertRaisesRegex(ValueError, "Unsupported role"):
+            generation.publish(destination, changed, evidence)
+        changed = deepcopy(reports)
+        evaluated = next(c for c in changed[5]["candidates"] if c["depth"]["status"] == "evaluated")
+        evaluated["depth"]["same_original_starter_absences"][0]["baseline_without_player"] = {}
+        with self.assertRaisesRegex(ValueError, "Signing absence baseline mismatch"):
             generation.publish(destination, changed, evidence)
         self.assertEqual(generation.read_current(destination)[0]["generation_id"], first)
 

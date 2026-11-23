@@ -160,7 +160,20 @@ def validate(reports, source):
             require(row["xi"] is None and row["scenario_assumed_availability"] is None, "Observed squad treated as signing")
         else:
             require(row["scenario_assumed_availability"] == "available" and row["xi"]["baseline"] == totals, "Hypothetical baseline mismatch")
-            assignments(row["xi"]["assignments"], squad | {pid})
+            selected = assignments(row["xi"]["assignments"], squad | {pid})
+            selected_slot = next((sid for sid, item in selected.items() if item["player_id"] == pid), None)
+            require(row["xi"]["selected_slot_id"] == selected_slot and row["xi"]["enters_xi"] == (selected_slot is not None), "Signing assignment mismatch")
+            if row["depth"]["status"] == "evaluated":
+                changes = index(row["depth"]["coverage_changes"], lambda r: r["slot_id"])
+                require(set(changes) == set(slots), "Incomplete signing depth")
+                for sid, change in changes.items():
+                    require(change["before_direct_ids"] == coverage[sid]["direct_deputy_ids"], "Signing depth baseline mismatch")
+                    require(set(change["after_direct_ids"]) <= squad | {pid}, "Unknown signing deputy")
+                events = index(row["depth"]["same_original_starter_absences"], lambda r: r["removed_player_id"])
+                require(set(events) == set(absences), "Signing absence baseline membership mismatch")
+                for removed, event in events.items():
+                    require(event["baseline_without_player"] == absences[removed]["reoptimised"], "Signing absence baseline mismatch")
+                    assignments(event["assignments"], (squad | {pid}) - {removed})
     comparisons = index(b["comparisons"] + b["native_comparisons"], lambda r: (r["player_id"], r["profile"], r["native_position"] or ""))
     expected = {(pid, profile, native) for pid in players for profile, codes in b["criteria"]["inherited_profile_position_mapping"].items() for native in ["", *codes]}
     require(set(comparisons) == expected, "Incomplete benchmark comparisons")
@@ -276,7 +289,9 @@ def publish(root, reports, provenance):
 def read_generation(directory):
     """Verify exact bytes, then expose deterministic, generation-local indexes."""
     directory = Path(directory)
-    manifest = decode((directory / "manifest.json").read_bytes())
+    raw_manifest = (directory / "manifest.json").read_bytes()
+    manifest = decode(raw_manifest)
+    require(raw_manifest == canonical(manifest), "Noncanonical manifest bytes")
     require(manifest["version"] == VERSION and manifest["generation_id"] == directory.name, "Invalid manifest identity")
     timestamp = datetime.fromisoformat(manifest["generated_utc"])
     require(timestamp.utcoffset() is not None and timestamp.utcoffset().total_seconds() == 0, "Invalid generation timestamp")
