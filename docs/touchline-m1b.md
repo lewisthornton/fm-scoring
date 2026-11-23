@@ -1,5 +1,9 @@
 # Touchline M1b — optional local preview
 
+For the optional Windows launcher, current cache policy and deployment
+verification, see [M1c](touchline-m1c.md). The M1b limits below describe the
+original M1b baseline.
+
 M1b uses only validated M1a generations. It does not read saves or SQLite,
 publish new generations, run scoring, or change the existing launcher.
 

@@ -26,15 +26,79 @@ jobs:
       - name: Python-only production runtime smoke
         run: python tests/touchline_runtime_smoke.py
       - name: Install browser
+        timeout-minutes: 10
         working-directory: touchline
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Browser workflow and accessibility
         working-directory: touchline
-        run: npm run browser
-      - name: Upload visual and performance evidence
+        run: npm run browser -- workflow.spec.ts
+      - name: Upload visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: touchline-browser-evidence
           path: touchline/test-results/
           if-no-files-found: warn
+      - name: Upload production frontend
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchline-production-dist
+          path: touchline/dist/
+          if-no-files-found: error
+  performance:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        size: [small, medium, large]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: touchline/package-lock.json
+      - name: Install frontend dependencies
+        timeout-minutes: 10
+        working-directory: touchline
+        run: npm ci
+      - name: Build production frontend
+        timeout-minutes: 10
+        working-directory: touchline
+        run: npm run build
+      - name: Install Chromium
+        timeout-minutes: 10
+        working-directory: touchline
+        run: npx playwright install --with-deps chromium
+      - name: Representative browser performance
+        timeout-minutes: 10
+        working-directory: touchline
+        env:
+          TOUCHLINE_BENCH_SIZE: ${{ matrix.size }}
+        run: npm run browser -- --project=chromium performance.spec.ts
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchline-performance-${{ matrix.size }}
+          path: touchline/test-results/
+          if-no-files-found: warn
+  windows-launch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build production bundle
+        working-directory: touchline
+        run: npm ci && npm run build
+      - name: Verify optional Windows launcher
+        run: python tests/touchline_launcher_smoke.py

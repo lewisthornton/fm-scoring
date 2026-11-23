@@ -295,18 +295,23 @@ def publish(root, reports, provenance):
 def read_generation(directory):
     """Verify exact bytes, then expose deterministic, generation-local indexes."""
     directory = Path(directory)
-    raw_manifest = (directory / "manifest.json").read_bytes()
+    return validate_generation_bytes(directory.name, (directory / "manifest.json").read_bytes(),
+                                     [(directory / name).read_bytes() for name in FILES])
+
+
+def validate_generation_bytes(generation_id, raw_manifest, bodies):
+    """Validate a captured byte snapshot; never reread files while decoding."""
     manifest = decode(raw_manifest)
     require(raw_manifest == canonical(manifest), "Noncanonical manifest bytes")
-    require(manifest["version"] == VERSION and manifest["generation_id"] == directory.name, "Invalid manifest identity")
+    require(manifest["version"] == VERSION and manifest["generation_id"] == generation_id, "Invalid manifest identity")
     timestamp = datetime.fromisoformat(manifest["generated_utc"])
     require(timestamp.utcoffset() is not None and timestamp.utcoffset().total_seconds() == 0, "Invalid generation timestamp")
     require(set(manifest["files"]) == set(FILES), "Incomplete manifest")
     require(manifest["source_sha256"] == digest(canonical(manifest["source"])), "Source fingerprint mismatch")
     require(manifest["cohort_sha256"] == digest(canonical([[r["player_id"], r["cohort"]] for r in manifest["source"]["members"]])), "Cohort fingerprint mismatch")
     reports = []
-    for name in FILES:
-        body = (directory / name).read_bytes()
+    require(len(bodies) == len(FILES), "Incomplete reports")
+    for name, body in zip(FILES, bodies):
         meta = manifest["files"][name]
         require(meta["sha256"] == digest(body) and meta["bytes"] == len(body), "Report hash mismatch: " + name)
         report = decode(body)

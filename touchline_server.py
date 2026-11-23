@@ -2,7 +2,10 @@
 import argparse
 import json
 import mimetypes
+import os
 import re
+import threading
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -38,9 +41,46 @@ def assignment(row):
 
 
 class Store:
-    def __init__(self, root, career):
+    def __init__(self, root, career, *, cache_entries=2, cache_bytes=32 * 1024 * 1024):
         self.root = Path(root).resolve()
         self.career = career
+        self.cache_entries = max(0, cache_entries)
+        self.cache_bytes = max(0, cache_bytes)
+        self._cache = OrderedDict()
+        self._seen_manifests = {}
+        self._lock = threading.RLock()
+
+    def _snapshot(self, gid, expected_manifest=None):
+        directory = self.directory(gid)
+        raw = (directory / "manifest.json").read_bytes()
+        manifest_hash = generation.digest(raw)
+        if expected_manifest is not None and expected_manifest != manifest_hash:
+            raise APIError(422, "generation_invalid")
+        bodies = [(directory / name).read_bytes() for name in generation.FILES]
+        # Hash all captured bytes on every request, including cache hits.
+        # Never trust mtimes, sizes or the manifest's declared digests alone.
+        key = (gid, manifest_hash, tuple(generation.digest(body) for body in bodies))
+        size = len(raw) + sum(map(len, bodies))
+        with self._lock:
+            if gid in self._seen_manifests and self._seen_manifests[gid] != manifest_hash:
+                raise APIError(422, "generation_identity_changed")
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key][1]
+            manifest, indexes = generation.validate_generation_bytes(gid, raw, bodies)
+            if manifest["career"] != self.career:
+                raise APIError(404, "generation_unavailable")
+            self._seen_manifests[gid] = manifest_hash
+            # A different byte identity for the same ID cannot reuse its old indexes.
+            for old in list(self._cache):
+                if old[0] == gid:
+                    del self._cache[old]
+            if self.cache_entries and size <= self.cache_bytes:
+                while self._cache and (len(self._cache) >= self.cache_entries or
+                        sum(entry[0] for entry in self._cache.values()) + size > self.cache_bytes):
+                    self._cache.popitem(last=False)
+                self._cache[key] = (size, (manifest, indexes))
+            return manifest, indexes
 
     def directory(self, gid):
         if not isinstance(gid, str) or not re.fullmatch(r"[0-9a-f]{32}", gid):
@@ -60,13 +100,12 @@ class Store:
                 pointer = self.root / "current.json"
                 if pointer.resolve() != pointer:
                     raise APIError(422, "generation_invalid")
-                current = generation.decode(pointer.read_bytes())["generation_id"]
-                self.directory(current)
-                manifest, indexes = generation.read_current(self.root)
-                if manifest["generation_id"] != current:
-                    raise APIError(409, "generation_changed_retry")
+                value = generation.decode(pointer.read_bytes())
+                if value["version"] != generation.VERSION or not isinstance(value["manifest_sha256"], str):
+                    raise APIError(422, "generation_invalid")
+                manifest, indexes = self._snapshot(value["generation_id"], value["manifest_sha256"])
             else:
-                manifest, indexes = generation.read_generation(self.directory(gid))
+                manifest, indexes = self._snapshot(gid)
             if manifest["career"] != self.career:
                 raise APIError(404, "generation_unavailable")
             return manifest, indexes
@@ -139,6 +178,11 @@ def make_server(store, dist, port=8765):
             assets["/assets/" + path.name] = path
     assets = {key: (path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
               for key, path in assets.items() if path.resolve() == path}
+    if "/" not in assets:
+        raise ValueError("Production frontend index is unavailable")
+    for ref in re.findall(rb'(?:src|href)="(/assets/[^"]+)"', assets["/"][0]):
+        if ref.decode("utf-8") not in assets:
+            raise ValueError("Production frontend asset is missing")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -207,7 +251,15 @@ def make_server(store, dist, port=8765):
                 return self.reject_method
             raise AttributeError(name)
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    class LocalServer(ThreadingHTTPServer):
+        # Do not permit a second listener to share the configured port.
+        allow_reuse_address = os.name != "nt"
+        def server_bind(self):
+            import socket
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+    return LocalServer(("127.0.0.1", port), Handler)
 
 
 def main():
