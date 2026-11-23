@@ -8,3 +8,58 @@
 @media(max-width:780px){.panel{margin-bottom:12px}.table-wrap{max-height:440px;overflow:auto;overscroll-behavior:contain}.table-wrap thead th{position:sticky;top:0;background:var(--raised);z-index:1}.pagination button{min-height:44px}.filters{gap:8px}.filters label{flex-wrap:wrap}.topbar{gap:8px}.intro{margin-bottom:12px}.panel h2{margin-bottom:10px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 #signing-impact-heading:focus{outline:3px solid var(--accent);outline-offset:4px}
+
+/* M2b.1 shared visual language: local system fonts, semantic colour and spacing. */
+:root{
+  --bg:#0d1520;--panel:#142030;--raised:#1b2a3c;--line:#37495f;
+  --text:#edf3fa;--muted:#b5c4d5;--accent:#79e5cc;--warn:#ffcd8b;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;
+  --radius:10px;
+}
+body{font-size:14px;line-height:1.5}
+.shell{grid-template-columns:236px minmax(0,1fr)}
+.sidebar{background:#111c2a;padding:24px 14px;gap:24px;overflow-y:auto}
+.brand b{font-size:21px;letter-spacing:-.5px}
+.brand small{font-size:9px;letter-spacing:1.2px}
+.nav-label{font-size:10px;font-weight:700;letter-spacing:1.4px;color:var(--muted);padding:0 12px 6px}
+nav button{min-height:44px;padding:10px 12px}
+nav button .nav-text{font-size:14px;width:auto;min-width:0}
+.nav-text small{display:block;font-size:10px;font-weight:400;line-height:1.35}
+nav button.nav-active{border-left:3px solid var(--accent);padding-left:10px}
+.topbar{gap:var(--space-6);padding:var(--space-4) var(--space-6);background:#111c2a}
+.topbar small{font-size:10px;font-weight:700;letter-spacing:.7px}
+.topbar b{font-variant-numeric:tabular-nums}
+.context-strip{padding:12px 0;font-size:12px}
+.intro{margin:24px 0}
+h1{font-size:32px;line-height:1.15;font-weight:700}
+h2{font-size:17px;line-height:1.35}
+.panel{border-radius:var(--radius);padding:20px}
+.metric,.totals{border-radius:var(--radius);font-variant-numeric:tabular-nums}
+.metric strong,.totals strong{color:var(--text)}
+.metric small,.totals small{font-size:12px;font-weight:600}
+.metric span,.totals span{font-size:12px}
+.priority:hover{background:var(--raised)}
+.state-message{border:1px solid var(--line);border-radius:var(--radius);background:var(--raised);padding:var(--space-4);margin:var(--space-3) 0;overflow-wrap:anywhere}
+.state-message strong{display:block;margin-bottom:var(--space-1)}
+.state-message p{margin-bottom:0}
+.state-message button{margin-top:var(--space-3)}
+.state-error{border-color:#c4886b}
+.state-error strong,.state-unavailable strong{color:var(--warn)}
+main:focus-visible{outline:none;box-shadow:inset 0 3px var(--accent)}
+.grid,.two-pane{align-items:start}
+.player-action{padding:3px 0;min-height:28px}
+.player-action[aria-pressed=true]{color:var(--text)}
+@media(max-width:1100px){.topbar{gap:var(--space-4)}}
+@media(max-width:780px){
+  .sidebar{padding:12px;gap:12px;overflow:visible}
+  .nav-label{flex-basis:100%;padding:0}
+  nav button{padding:8px;min-height:44px}
+  nav button.nav-active{padding-left:6px}
+  nav button .nav-text{font-size:12px}
+  .nav-text small{font-size:10px}
+  .topbar{padding:12px;gap:12px}
+  .panel{padding:14px}
+  h1{font-size:26px}
+  .intro{margin:16px 0}
+  .notice button{margin:8px 0 0}
+}

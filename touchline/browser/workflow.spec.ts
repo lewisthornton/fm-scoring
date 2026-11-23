@@ -5,6 +5,46 @@ import {join} from "node:path";
 import {execFileSync} from "node:child_process";
 import type {Envelope, Overview, Signing} from "../src/types";
 
+test("shared shell preserves pinned navigation and exposes planned workspaces",async ({page,request},info)=>{
+  await page.goto("/");
+  await expect(page.getByRole("heading",{name:"Squad overview"})).toBeVisible();
+  const generation=new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation");
+  const nav=page.getByRole("navigation",{name:"Workspaces"});
+  await expect(nav.getByRole("button",{name:"Overview"})).toHaveAttribute("aria-current","page");
+  await page.keyboard.press("Tab");
+  await page.getByRole("link",{name:"Skip to content"}).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+  await nav.getByRole("button",{name:"Overview"}).focus();
+  await page.evaluate(()=>window.scrollTo(0,0));
+  for(const width of [1440,768,390]){
+    await page.setViewportSize({width,height:900});
+    await page.screenshot({path:info.outputPath("overview-"+width+".png"),fullPage:true});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa"]).analyze()).violations.map(v=>v.id)).toEqual([]);
+  }
+  await nav.getByRole("button",{name:/Squad Planned/}).click();
+  await expect(page.getByRole("heading",{name:"Squad",exact:true})).toBeVisible();
+  await expect(page.getByText("This workspace is not implemented yet.",{exact:false})).toBeVisible();
+  await expect(page.getByRole("main")).toBeFocused();
+  await nav.getByRole("button",{name:"Tactics & XI"}).click();
+  await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+  await expect(page.getByText("Select a pitch position or table row.")).toBeVisible();
+  await page.screenshot({path:info.outputPath("tactics-mobile.png"),fullPage:true});
+  const overview:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation:generation!}})).json();
+  const assigned=overview.data.baseline.find(a=>a.player_id)!;
+  const player=overview.data.players.find(p=>p.player_id===assigned.player_id)!;
+  const slot=overview.data.slots.find(s=>s.id===assigned.slot_id)!;
+  await page.getByRole("table",{name:/XI assignments/}).getByRole("button",{name:player.display_name,exact:true}).click();
+  await expect(page.getByRole("heading",{name:slot.label,exact:true})).toBeVisible();
+  expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("slot")).toBe(slot.id);
+  await nav.getByRole("button",{name:"Data & Settings"}).click();
+  await expect(page.getByRole("heading",{name:"Generation evidence"})).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+  expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(generation);
+});
+
 async function keyboardActivate(page:Page, text:RegExp) {
   for(let i=0;i<180;i++){
     const label=await page.evaluate(()=>document.activeElement?.textContent??"");
