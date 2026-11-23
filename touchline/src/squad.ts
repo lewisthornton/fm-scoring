@@ -26,9 +26,11 @@ function value(r:SquadRow,key:SortKey):string {
   }
 }
 const compare=(a:string,b:string)=>a<b?-1:a>b?1:0;
+const nameCollator=new Intl.Collator("en-GB",{sensitivity:"base"});
+export function clubRelationship(state:string|undefined){return ({permanent:"Permanent",incoming:"Incoming loan",outgoing:"Outgoing loan",unknown:"Unknown"} as Record<string,string>)[state??""]??"Unknown";}
 export function filterSquad(rows:SquadRow[],query:string,availabilityFilter:string,positionFilter:string,key:SortKey,reverse:boolean) {
   return rows.filter(({player:p})=>p.display_name.toLowerCase().includes(query.trim().toLowerCase())&&(availabilityFilter==="all"||availability(p)===availabilityFilter)&&(positionFilter==="all"||position(p)===positionFilter)).sort((a,b)=>{
     const x=value(a,key).toLowerCase(),y=value(b,key).toLowerCase();
-    return (!x!==!y?(!x?1:-1):compare(x,y)*(reverse?-1:1))||compare(a.player.player_id,b.player.player_id);
+    return (!x!==!y?(!x?1:-1):(key==="name"?nameCollator.compare(x,y):compare(x,y))*(reverse?-1:1))||compare(a.player.player_id,b.player.player_id);
   });
 }
