@@ -50,6 +50,13 @@ test("switch clears missing slot and player, keeps valid context",()=>{
   const gone=switchGeneration(r,"new",["rb"],["B"],["B"]);
   assert.equal(gone.route.page,"Tactics & XI");assert.equal(gone.route.player,"");assert.equal(gone.route.slot,"");assert.match(gone.notice,/no longer/);
 });
+test("missing tactical slot clears action context while retaining a valid M1 candidate identity",()=>{
+  const r={page:"Recruitment" as const,generation:"old",slot:"lb",player:"A",impact:true};
+  const gone=switchGeneration(r,"new",["rb"],["A"],["A"]);
+  assert.equal(gone.route.page,"Tactics & XI");assert.equal(gone.route.slot,"");
+  assert.equal(gone.route.impact,false);assert.equal(gone.route.player,"A");
+  assert.match(gone.notice,/Selected slot no longer exists/);
+});
 test("filter preserves engine order and namesakes remain separate",()=>{
   const rows=[{player_id:"z",eligible:true},{player_id:"a",eligible:false},{player_id:"b",eligible:true}];
   assert.deepEqual(filterCandidates(rows,{z:"Same",a:"Same",b:"Same"},"same",true).map(x=>x.player_id),["z","b"]);

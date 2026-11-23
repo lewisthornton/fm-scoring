@@ -208,3 +208,83 @@ provenance remain distinct from the displayed record and membership dates.
 Excluded: profile/history/benchmark drill-down, granular positional evidence
 contracts, new analytics, scoring or solver changes, watcher, launcher,
 persistence, dependency and league/staff workspace changes.
+
+### M2b.2 Firefox history compatibility investigation (23 November 2026)
+
+PR #30's remote commit `ca6802993c1531ded850eb485bd65e8f96a5622c`
+has the same tree as the original local commit `f0f6551`; the correction is
+limited to tests and this document, pending publication approval.
+
+- Run [45197470200](https://github.com/lewisthornton/fm-scoring/actions/runs/45197470200),
+  frontend job 137776756700, passed 17/18 browser tests. Firefox 141 failed
+  after the reload/Back sequence; the downloaded browser evidence artifact
+  14831496052's error-context snapshot showed the original Tactics heading,
+  pinned generation and selected goalkeeper, not a loading state. No trace
+  ZIP was present in that artifact. A local reproduction captured a trace.
+- Run [45197532696](https://github.com/lewisthornton/fm-scoring/actions/runs/45197532696),
+  frontend job 137771913620, failed earlier: the Install browser step timed
+  out after ten minutes downloading Ubuntu packages; browser tests were
+  skipped. This is a separate infrastructure failure, not another Firefox
+  execution. Performance and Windows launcher jobs passed in both runs.
+
+The instrumented local Firefox 141 reproduction failed with the original
+five-second assertion. With invented generation `f7b447deceef4fa08872d09ea530c8da`,
+the `Squad` URL had history length 2. Its assigned-player link reached
+`#page=Tactics+%26+XI&generation=f7b447deceef4fa08872d09ea530c8da&slot=gk&player=%5B%22rangers%22%2C%22invented-career%22%2C%222%7C2%7C2000-01-01%22%5D&impact=0`
+with length 3. Reload retained the exact URL and heading but increased
+history length to 4. Back returned to the same URL (length 4), with a
+`pageshow` event rather than a Squad hash change. `history.state` was null
+throughout and no page error was reported by the instrumentation. The same
+behavior reproduced on an intercepted plain HTML page with just two hash
+changes and no Touchline code. Chromium retained its pre-reload history
+length and Back returned to `#Squad` on that same minimal page.
+
+The production hash router already restores the pinned generation from the
+URL and only replaces an initial unpinned route. The failure was the test's
+assumption that one Back after reload necessarily reaches the previous
+distinct URL. The corrected test checks the single history entry added by
+the actual Squad-to-Tactics action, verifies Back and Forward before reload,
+asserts exact reload URL and tactical heading, and then verifies Back and
+Forward again. Exactly one additional Back is permitted only if the first
+Back retains the exact tactical URL and reload demonstrably added one history
+entry. Neither arbitrary retries, longer timeouts nor a Firefox skip are used.
+The route and history snapshots are attached to the test result. Application
+code, M1 workflows and M2a contracts remain unchanged.
+
+Independent audit dispositions:
+
+- Pagination: missing coverage; an explicitly synthetic card projection
+  adds 26 unique squad members, verifying bounded rows, keyboard Previous/
+  Next, search/reset, pinned identity and no invented player destination.
+- Generation reconciliation: missing coverage; genuine published fixture
+  generations cover the assigned player following `lb` to `lb_new` and
+  retaining canonical identity. Explicit frontend-only invented overview
+  projections cover unassignment, lost squad membership and removal; they
+  must clear slot/player, retain the explicitly accepted destination generation
+  and display the notice. These projections do not claim new backend fixtures.
+- Unknown analysis domain: deliberate defensive behavior. Valid published
+  `keeper` is a boolean, so the Unknown option is unreachable for valid
+  current cards; it would only handle missing/unexpected classification.
+  It is not granular positional evidence; the outfield label can still
+  include missing GK evidence. No new filters or report fields are required.
+- Lost tactical slot: existing M1 behavior deliberately retains a canonical
+  candidate ID if it remains valid, while clearing slot and impact and showing
+  the tactical overview. No selected slot or signing action is rendered there.
+  The new unit regression records this distinction; a player-specific Squad
+  assignment link that loses its assignment clears both slot and player.
+
+Local verification of the correction: full Chromium and Firefox suite
+passed (9 tests each, including performance); the final focused history
+test was repeated in each browser after persisting the JSON evidence file
+and passed again. Final evidence reproduced Firefox 2 → 3 → 4 → 4 and
+Chromium 3 → 4 → 4 → 4 history lengths at Squad, Tactics, reload, first
+Back respectively. Firefox's first Back stayed at Tactics; Chromium's
+returned to Squad. The second distinct-route traversal and Forward checks
+passed. Frontend unit tests 9/9, TypeScript/Vite build, Python 217/217,
+and Linux Python-only runtime and launcher smoke checks passed. WebKit
+26.0 downloaded but launch failed because the host lacks GTK4, Graphene,
+WOFF2, HarfBuzz ICU, Hyphen, Manette and GLES libraries; no privileged
+package installer is available. Its corrected workflow remains unverified
+until GitHub CI runs. Prior CI WebKit passed 6/6 on the original commit.
+GitHub CI for the correction and physical Windows acceptance remain pending;
+no remote PR update or merge is authorized by these local results.
