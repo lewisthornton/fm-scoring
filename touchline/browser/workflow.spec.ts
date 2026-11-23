@@ -41,6 +41,8 @@ test("canonical workflow, keyboard, offline requests, responsive evidence and me
   await keyboardActivate(page,new RegExp(targetPlayer.display_name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
   await expect(page.getByRole("heading",{name:targetPlayer.display_name,exact:true})).toBeVisible();
   await expect(page.getByRole("heading",{name:targetPlayer.display_name,exact:true})).toBeFocused();
+  await keyboardActivate(page,/Back to candidate list/);
+  await expect(page.getByRole("button",{name:targetPlayer.display_name,exact:true})).toBeFocused();
   await keyboardActivate(page,/Inspect signing impact/);
   await expect(page.getByRole("heading",{name:"Revised XI"})).toBeVisible();
   const signingResponse=await request.get("/api/signing",{params:{generation:gid,player:target.player_id}});
@@ -84,6 +86,10 @@ test("canonical workflow, keyboard, offline requests, responsive evidence and me
   const measurements={initial_ms:initial,overview_bytes:bytes,candidates_bytes:(await candidatesResponse.body()).length,signing_bytes:(await signingResponse.body()).length,filter_ms:filterMs,targets:over.data.recommendations.length};
   fs.writeFileSync(info.outputPath("measurements.json"),JSON.stringify(measurements,null,2));
   console.log(measurements);
+  const elsewhere=over.data.slots.find(s=>s.id!==sid&&!target.eligible_slot_ids.includes(s.id))!;
+  await page.getByLabel("Selection slot").selectOption(elsewhere.id);
+  await expect(page.getByText("Ineligible for this slot, but improves the XI elsewhere.")).toBeVisible();
+  await expect(page.getByText("Actual hypothetical assignment: "+slot.label+".",{exact:true})).toBeVisible();
 });
 
 test("generation remains pinned through updates and missing selections clear",async ({page,request})=>{

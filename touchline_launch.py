@@ -59,9 +59,13 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":
+def run(argv=None):
     try:
-        raise SystemExit(main())
+        return main(argv)
     except KeyboardInterrupt:
         print("Touchline startup cancelled.", file=sys.stderr)
-        raise SystemExit(130)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())
