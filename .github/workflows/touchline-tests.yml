@@ -31,24 +31,12 @@ jobs:
       - name: Browser workflow and accessibility
         working-directory: touchline
         run: npm run browser -- workflow.spec.ts
-      - name: Representative browser performance
-        working-directory: touchline
-        run: |
-          mkdir -p benchmark-evidence/workflow
-          cp -r test-results/* benchmark-evidence/workflow/
-          for size in small medium large; do
-            TOUCHLINE_BENCH_SIZE=$size npm run browser -- --project chromium performance.spec.ts
-            mkdir -p "benchmark-evidence/$size"
-            cp -r test-results/* "benchmark-evidence/$size/"
-          done
-      - name: Upload visual and performance evidence
+      - name: Upload visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: touchline-browser-evidence
-          path: |
-            touchline/test-results/
-            touchline/benchmark-evidence/
+          path: touchline/test-results/
           if-no-files-found: warn
       - name: Upload production frontend
         if: always()
@@ -57,6 +45,40 @@ jobs:
           name: touchline-production-dist
           path: touchline/dist/
           if-no-files-found: error
+  performance:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        size: [small, medium, large]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: touchline/package-lock.json
+      - name: Build and install Chromium
+        working-directory: touchline
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Representative browser performance
+        working-directory: touchline
+        env:
+          TOUCHLINE_BENCH_SIZE: ${{ matrix.size }}
+        run: npm run browser -- --project=chromium performance.spec.ts
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: touchline-performance-${{ matrix.size }}
+          path: touchline/test-results/
+          if-no-files-found: warn
   windows-launch:
     runs-on: windows-latest
     steps:
