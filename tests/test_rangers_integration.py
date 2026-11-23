@@ -54,6 +54,143 @@ def write_csv(path, rows):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_touchline_historical_selection_fingerprint(self):
+        from copy import deepcopy
+        from touchline_server import Store
+        self.process()
+        self.target["attributes_pace"] = "20"
+        self.process()
+        self.target_gk["attributes_reflexes"] = "20"
+        self.process()
+        self.assertEqual(self.db.execute("SELECT count(DISTINCT snapshot_id) FROM player_latest WHERE career=?", (CAREER,)).fetchone()[0], 3)
+        args = SimpleNamespace(db=self.dbpath, career=CAREER, formation=None)
+        evidence = {}
+        reports = bridge.build_reports(args, ROOT, provenance=evidence)[:6]
+        destination = self.root / "touchline"
+        first = generation.publish(destination, reports, evidence)
+        original, _ = generation.read_current(destination)
+        self.assertTrue(all("selection_fingerprint_status" not in row for row in original["source"]["snapshots"]))
+        self.assertEqual(Store(destination, CAREER).data("current")["provenance"]["historical_selection_fingerprint_evidence"],
+                         {"snapshot_count": 3, "sha256_format_count": 3, "unverified": []})
+        first_dir = destination / "generations" / first
+        original_bytes = {p.name: p.read_bytes() for p in first_dir.iterdir()}
+        for raw, status in (("x", "unverified_invalid"), ("", "unverified_missing"), ("A" * 64, "unverified_invalid")):
+            with self.subTest(raw=raw):
+                with self.db:
+                    self.db.execute("UPDATE snapshots SET selection_sha256=? WHERE id=1", (raw,))
+                before = self.dump()
+                captured = {}
+                actual = bridge.build_reports(args, ROOT, provenance=captured)[:6]
+                self.assertEqual(actual, reports)
+                saved_capture = deepcopy(captured)
+                gid = generation.publish(destination, actual, captured)
+                self.assertEqual(saved_capture, captured)
+                self.assertEqual(self.dump(), before)
+                manifest, _ = generation.read_current(destination)
+                self.assertEqual(manifest["generation_id"], gid)
+                self.assertEqual(manifest["source"]["snapshots"][0]["selection_sha256"], raw)
+                self.assertEqual(manifest["source"]["snapshots"][0]["selection_fingerprint_status"], status)
+                self.assertTrue(any(row["record_snapshot_id"] == 1 for row in manifest["source"]["members"]))
+                self.assertEqual(original["cohort_sha256"], manifest["cohort_sha256"])
+                self.assertNotEqual(original["source_sha256"], manifest["source_sha256"])
+                self.assertEqual(Store(destination, CAREER).data("current")["provenance"]["historical_selection_fingerprint_evidence"],
+                                 {"snapshot_count": 3, "sha256_format_count": 2, "unverified": [{"snapshot_id": 1, "status": status}]})
+                directory = destination / "generations" / gid
+                self.assertEqual(set(p.name for p in directory.iterdir()), {"manifest.json", *generation.FILES})
+                for name in generation.FILES:
+                    self.assertEqual((directory / name).read_bytes(), original_bytes[name])
+                self.assertEqual({p.name: p.read_bytes() for p in first_dir.iterdir()}, original_bytes)
+        # A nullable historical schema/captured row may explicitly record no hash.
+        captured["snapshots"][0]["selection_sha256"] = None
+        generation.publish(destination, reports, captured)
+        manifest, _ = generation.read_current(destination)
+        self.assertIsNone(manifest["source"]["snapshots"][0]["selection_sha256"])
+        self.assertEqual(manifest["source"]["snapshots"][0]["selection_fingerprint_status"], "unverified_missing")
+        generation.rollback(destination, first)
+        self.assertEqual(generation.read_current(destination)[0], original)
+
+    def test_touchline_unverified_selection_does_not_relax_integrity(self):
+        from copy import deepcopy
+        self.process()
+        self.target["attributes_pace"] = "20"
+        self.process()
+        with self.db:
+            self.db.execute("UPDATE snapshots SET selection_sha256='x' WHERE id=1")
+        args = SimpleNamespace(db=self.dbpath, career=CAREER, formation=None)
+        evidence = {}
+        reports = bridge.build_reports(args, ROOT, provenance=evidence)[:6]
+        destination = self.root / "touchline"
+        gid = generation.publish(destination, reports, evidence)
+        manifest, _ = generation.read_current(destination)
+        pointer = (destination / "current.json").read_bytes()
+        directory = destination / "generations" / gid
+        bodies = [(directory / name).read_bytes() for name in generation.FILES]
+        def assert_preserved():
+            self.assertEqual((destination / "current.json").read_bytes(), pointer)
+            self.assertEqual(list((destination / "generations").iterdir()), [directory])
+            self.assertEqual(generation.read_current(destination)[0], manifest)
+        for field, value in (("source_sha256", "x"), ("source_sha256", None), ("selection_sha256", 7)):
+            invalid = deepcopy(evidence)
+            invalid["snapshots"][0][field] = value
+            with self.assertRaises(ValueError):
+                generation.publish(destination, reports, invalid)
+            assert_preserved()
+        missing = deepcopy(evidence)
+        del missing["snapshots"][0]["selection_sha256"]
+        with self.assertRaisesRegex(ValueError, "Missing snapshot selection evidence"):
+            generation.publish(destination, reports, missing)
+        assert_preserved()
+        broken = deepcopy(evidence)
+        broken["observations"][0]["record_snapshot_id"] = 999
+        with self.assertRaisesRegex(ValueError, "Observation snapshot mismatch"):
+            generation.publish(destination, reports, broken)
+        assert_preserved()
+        # Even an internally rehashed manifest must explicitly and consistently mark the limitation.
+        for status in (None, "sha256_format", "unverified_missing"):
+            edited = deepcopy(manifest)
+            row = edited["source"]["snapshots"][0]
+            if status is None:
+                del row["selection_fingerprint_status"]
+            else:
+                row["selection_fingerprint_status"] = status
+            edited["source_sha256"] = generation.digest(generation.canonical(edited["source"]))
+            with self.assertRaisesRegex(ValueError, "Unmarked or contradictory"):
+                generation.validate_generation_bytes(gid, generation.canonical(edited), bodies)
+        edited = deepcopy(manifest)
+        edited["source"]["snapshots"][1]["selection_fingerprint_status"] = "unverified_invalid"
+        edited["source_sha256"] = generation.digest(generation.canonical(edited["source"]))
+        with self.assertRaisesRegex(ValueError, "Contradictory snapshot selection evidence"):
+            generation.validate_generation_bytes(gid, generation.canonical(edited), bodies)
+        for key, value in (("record_sha256", "x"), ("record_snapshot_id", 999)):
+            edited = deepcopy(manifest)
+            edited["source"]["members"][0][key] = value
+            edited["source_sha256"] = generation.digest(generation.canonical(edited["source"]))
+            with self.assertRaises(ValueError):
+                generation.validate_generation_bytes(gid, generation.canonical(edited), bodies)
+        # An existing same-career snapshot without the player's version is not a valid relationship.
+        key = watcher.identity(self.cb)
+        with self.db:
+            self.db.execute("UPDATE player_latest SET snapshot_id=2 WHERE career=? AND player_key=?", (CAREER, key))
+        with self.assertRaisesRegex(ValueError, "Missing or cross-career"):
+            bridge.build_reports(args, ROOT, provenance={})
+        with self.db:
+            self.db.execute("UPDATE player_latest SET snapshot_id=1 WHERE career=? AND player_key=?", (CAREER, key))
+        assert_preserved()
+        with self.db:
+            self.db.execute("UPDATE snapshots SET career='other-invented-career' WHERE id=1")
+        with self.assertRaisesRegex(ValueError, "cross-career"):
+            bridge.build_reports(args, ROOT, provenance={})
+        assert_preserved()
+        for i, name in enumerate(generation.FILES):
+            path = directory / name
+            try:
+                path.write_bytes(bodies[i] + b" ")
+                with self.assertRaisesRegex(ValueError, "Report hash mismatch"):
+                    generation.read_current(destination)
+            finally:
+                path.write_bytes(bodies[i])
+        assert_preserved()
+
     def test_touchline_generation_contract(self):
         self.process()
         self.prepare_renderer()

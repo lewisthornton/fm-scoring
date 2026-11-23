@@ -51,6 +51,25 @@ def index(rows, key):
     return dict(sorted(result.items()))
 
 
+def selection_fingerprint_status(value):
+    """Classify historical selection evidence without inventing a digest."""
+    require(value is None or isinstance(value, str), "Invalid snapshot selection fingerprint type")
+    if value is None or value == "":
+        return "unverified_missing"
+    if re.fullmatch("[0-9a-f]{64}", value):
+        return "sha256_format"
+    return "unverified_invalid"
+
+
+def historical_selection_evidence(source):
+    """Compact consumer-facing evidence; do not expose malformed raw values via API."""
+    snapshots = source["snapshots"]
+    unverified = [{"snapshot_id": row["id"], "status": row["selection_fingerprint_status"]}
+                  for row in snapshots if "selection_fingerprint_status" in row]
+    return {"snapshot_count": len(snapshots), "sha256_format_count": len(snapshots) - len(unverified),
+            "unverified": unverified}
+
+
 def validate(reports, source):
     f, a, b, x, d, s = reports
     require(all(type(r["version"]) is int and r["version"] == 1 for r in reports), "Unsupported report version")
@@ -82,8 +101,14 @@ def validate(reports, source):
         date.fromisoformat(accepted)
     snapshot_index = index(source["snapshots"], lambda row: row["id"])
     for snapshot in snapshot_index.values():
-        for key in ("source_sha256", "selection_sha256"):
-            require(re.fullmatch("[0-9a-f]{64}", snapshot[key]), "Invalid snapshot fingerprint")
+        require(isinstance(snapshot.get("source_sha256"), str) and
+                re.fullmatch("[0-9a-f]{64}", snapshot["source_sha256"]), "Invalid snapshot source fingerprint")
+        require("selection_sha256" in snapshot, "Missing snapshot selection evidence")
+        status = selection_fingerprint_status(snapshot["selection_sha256"])
+        if status == "sha256_format":
+            require("selection_fingerprint_status" not in snapshot, "Contradictory snapshot selection evidence")
+        else:
+            require(snapshot.get("selection_fingerprint_status") == status, "Unmarked or contradictory snapshot selection evidence")
         if snapshot["game_date"]:
             date.fromisoformat(snapshot["game_date"])
             require(accepted is None or snapshot["game_date"] <= accepted, "Snapshot after accepted chronology")
@@ -237,8 +262,17 @@ def source_identity(provenance, career):
                         "record_game_date": row["record_game_date"], "last_seen_game_date": row["last_seen_game_date"],
                         "game_build": row["game_build"], "record_snapshot_id": row["record_snapshot_id"],
                         "source_export": Path(row["source_export"]).name if row["source_export"] else None})
+    snapshots = []
+    for row in provenance["snapshots"]:
+        snapshot = dict(row)
+        require("selection_sha256" in snapshot, "Missing snapshot selection evidence")
+        require("selection_fingerprint_status" not in snapshot, "Unexpected snapshot selection annotation")
+        status = selection_fingerprint_status(snapshot["selection_sha256"])
+        if status != "sha256_format":
+            snapshot["selection_fingerprint_status"] = status
+        snapshots.append(snapshot)
     return {"accepted_game_date": provenance["accepted_game_date"], "managed_club_uid": provenance["managed_club_uid"],
-            "members": sorted(members, key=lambda r: (r["player_id"], r["cohort"])), "snapshots": provenance["snapshots"],
+            "members": sorted(members, key=lambda r: (r["player_id"], r["cohort"])), "snapshots": snapshots,
             "benchmark_cache_sha256": digest(canonical(provenance["benchmark_cache"])) if provenance["benchmark_cache"] is not None else None}
 
 
