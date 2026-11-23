@@ -10,7 +10,7 @@ from test_rangers_integration import IntegrationTests, CAREER, player, bridge
 import touchline_generation as generation
 
 
-def create(root, squad_count=9, target_count=19, *, changed_slot=False):
+def create(root, squad_count=9, target_count=19, *, changed_slot=False, legacy_selection=False):
     fixture = IntegrationTests()
     fixture.setUp()
     try:
@@ -51,6 +51,9 @@ def create(root, squad_count=9, target_count=19, *, changed_slot=False):
             fixture.world.append(p)
             fixture.candidates.append({"Unique ID": str(uid)})
         fixture.process()
+        if legacy_selection:
+            with fixture.db:
+                fixture.db.execute("UPDATE snapshots SET selection_sha256='x' WHERE id=1")
         args = SimpleNamespace(db=fixture.dbpath, career=CAREER, formation=None, signing_depth_limit=2)
         def publish():
             evidence = {}

@@ -26,6 +26,9 @@ test("canonical workflow, keyboard, offline requests, responsive evidence and me
   const response=await request.get("/api/overview",{params:{generation:gid}});
   const bytes=(await response.body()).length;
   const over:Envelope<Overview>=await response.json();
+  expect(over.provenance.historical_selection_fingerprint_evidence).toEqual({
+    snapshot_count:1,sha256_format_count:0,unverified:[{snapshot_id:1,status:"unverified_invalid"}]
+  });
   const target=over.data.recommendations.find(r=>r.classification==="completeness_upgrade"||r.classification==="starting_upgrade")!;
   const sid=target.selected_slot_id!;
   const slot=over.data.slots.find(s=>s.id===sid)!;

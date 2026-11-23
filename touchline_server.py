@@ -26,6 +26,7 @@ def provenance(manifest):
     return {**fields(manifest, "generation_id", "career", "game_date", "generated_utc",
                      "configuration", "benchmark", "source_sha256", "cohort_sha256"),
             "accepted_game_date": manifest["source"]["accepted_game_date"],
+            "historical_selection_fingerprint_evidence": generation.historical_selection_evidence(manifest["source"]),
             "schema_version": manifest["version"],
             "report_versions": {name: data["version"] for name, data in manifest["files"].items()}}
 

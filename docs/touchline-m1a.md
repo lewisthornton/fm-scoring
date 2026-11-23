@@ -45,6 +45,39 @@ chronology explicitly expose missing evidence. The accepted watermark,
 record observation date, membership last-seen date, benchmark extraction
 date and host generation time are distinct.
 
+### Historical selection fingerprint compatibility
+
+Historical snapshot `source_sha256` must still be a lowercase 64-character
+SHA-256 digest. The historical `selection_sha256` is an evidence field, not
+the current cohort fingerprint. Publication preserves its original text or
+explicit null and annotates only unavailable or malformed values:
+
+| Captured selection value | Manifest representation |
+| --- | --- |
+| 64 lowercase hexadecimal characters | Original digest, no new annotation (existing v1 format) |
+| Empty text or explicit null | Original value and `selection_fingerprint_status: "unverified_missing"` |
+| Any other nonempty text (including a one-character placeholder or uppercase hex) | Original value and `selection_fingerprint_status: "unverified_invalid"` |
+| Missing field or non-text, non-null value | Publication rejected |
+
+The reader requires the exact matching annotation for unverified values
+and rejects contradictory annotations. Valid SHA-256 syntax is not proof
+that the original selection file is still available or was independently
+verified; the origin of malformed historical values is unknown. No
+replacement selection hash is manufactured, and no SQLite rows are edited.
+The annotation and original value are covered by the current manifest's
+source digest. The API provenance field
+`historical_selection_fingerprint_evidence` exposes snapshot and SHA-256
+format counts and the IDs/statuses of unverified snapshots, without
+exposing malformed raw text. A zero snapshot count means evidence was not
+recorded, not that historical selection files were verified. The existing
+Data & Settings view displays this additive provenance metadata.
+
+All existing current source/cohort, player record, snapshot relationship,
+career, chronology, model, formation, report byte and cross-report checks
+remain in force. Existing valid generation manifests retain their v1
+shape, and existing report files are unchanged. Never edit a historical
+database or published generation to repair a fingerprint.
+
 The manifest uses a normalized formation hash and the original scoring TOML
 byte hash. Effective eligibility policy and signing depth limit are
 recorded. Legacy JSON serialization is preserved, including platform newline
