@@ -143,6 +143,36 @@ def get_database(dbpath: Path, career: str, *, with_benchmark=False, allow_empty
                 provenance["snapshots"] = [dict(r) for r in con.execute(
                     "SELECT " + ",".join(fields) + " FROM snapshots WHERE career=? ORDER BY id", (career,)
                 )] if set(fields) <= columns else []
+                # Capture sparse versions and membership in the very same read transaction.
+                # A reused provenance dictionary must not retain an earlier capture.
+                provenance.pop("history", None)
+                history_columns = {
+                    "player_versions": {"career", "player_key", "snapshot_id", "record_hash", "record_json"},
+                    "player_latest": {"career", "player_key", "snapshot_id", "record_hash"},
+                    "cohort_membership": {"career", "player_key", "cohort", "active", "last_seen_game_date"},
+                }
+                if ((set(fields) | {"imported_utc", "changed_count"}) <= columns and
+                        all(needed <= {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+                            for table, needed in history_columns.items())):
+                    provenance["history"] = {
+                        "snapshot_counts": [dict(r) for r in con.execute("""
+                            SELECT id, changed_count FROM snapshots WHERE career=? ORDER BY id
+                        """, (career,))],
+                        "versions": [dict(r) for r in con.execute("""
+                            SELECT v.player_key, v.snapshot_id, v.record_hash, v.record_json,
+                                   s.career AS snapshot_career, s.imported_utc
+                            FROM player_versions v LEFT JOIN snapshots s ON s.id=v.snapshot_id
+                            WHERE v.career=? ORDER BY v.snapshot_id, v.player_key
+                        """, (career,))],
+                        "latest": [dict(r) for r in con.execute("""
+                            SELECT player_key, snapshot_id, record_hash FROM player_latest
+                            WHERE career=? ORDER BY player_key
+                        """, (career,))],
+                        "membership": [dict(r) for r in con.execute("""
+                            SELECT player_key, cohort, active, last_seen_game_date
+                            FROM cohort_membership WHERE career=? ORDER BY player_key, cohort
+                        """, (career,))],
+                    }
             if with_benchmark and con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='career_benchmark'").fetchone():
                 cached = con.execute("SELECT aggregate_json FROM career_benchmark WHERE career=?", (career,)).fetchone()
                 if cached:

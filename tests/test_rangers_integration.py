@@ -96,7 +96,7 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual(Store(destination, CAREER).data("current")["provenance"]["historical_selection_fingerprint_evidence"],
                                  {"snapshot_count": 3, "sha256_format_count": 2, "unverified": [{"snapshot_id": 1, "status": status}]})
                 directory = destination / "generations" / gid
-                self.assertEqual(set(p.name for p in directory.iterdir()), {"manifest.json", *generation.FILES})
+                self.assertEqual(set(p.name for p in directory.iterdir()), {"manifest.json", *generation.FILES, generation.HISTORY_FILE})
                 for name in generation.FILES:
                     self.assertEqual((directory / name).read_bytes(), original_bytes[name])
                 self.assertEqual({p.name: p.read_bytes() for p in first_dir.iterdir()}, original_bytes)

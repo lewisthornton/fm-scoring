@@ -115,11 +115,45 @@ class Store:
         except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError, RecursionError):
             raise APIError(422, "generation_invalid") from None
 
-    def data(self, route, gid=None, slot=None, player=None):
+    def data(self, route, gid=None, slot=None, player=None, offset=0, limit=20):
         manifest, ix = self.load(gid)
         meta = provenance(manifest)
         if route in ("current", "generation"):
             return {"generation_id": meta["generation_id"], "provenance": meta}
+        if route in ("profile", "history", "benchmark"):
+            if gid is None or player is None:
+                raise APIError(400, "invalid_query")
+            if route == "history" and (type(offset) is not int or type(limit) is not int or offset < 0 or not 1 <= limit <= 50):
+                raise APIError(400, "invalid_pagination")
+            try:
+                history = generation.read_history(self.directory(gid), manifest)
+            except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError, RecursionError):
+                raise APIError(422, "history_invalid") from None
+            evidence = (history or {}).get(player)
+            assessment = ix["players"].get(player)
+            if evidence is None and assessment is None:
+                raise APIError(404, "player_unavailable")
+            meta["history_artifact"] = manifest.get("history")
+            result = {"version": generation.HISTORY_VERSION, "player_id": player, "career": manifest["career"]}
+            if route == "profile":
+                result.update(assessment=assessment, membership=evidence["membership"] if evidence else None,
+                              current_observation=evidence["observations"][-1] if evidence else None,
+                              history_status="available" if evidence else "unavailable",
+                              history_reason=None if evidence else "generation_has_no_history_artifact")
+            elif route == "history":
+                rows = evidence["observations"] if evidence else []
+                result.update(status="available" if evidence else "unavailable", total=len(rows) if evidence else None,
+                              reason=None if evidence else "generation_has_no_history_artifact",
+                              offset=offset, limit=limit, observations=rows[offset:offset + limit],
+                              next_offset=offset + limit if offset + limit < len(rows) else None)
+            else:
+                result.update(status=manifest["benchmark"]["status"] if assessment else "unavailable",
+                              reason=manifest["benchmark"]["reason"] if assessment else "no_current_player_comparison",
+                              reference=manifest["benchmark"], comparisons=[v for k, v in ix["benchmarks"].items() if k[0] == player])
+            response = {"generation_id": gid, "provenance": meta, "data": result}
+            if len(generation.canonical(response)) > 512 * 1024:
+                raise APIError(422, "player_evidence_too_large")
+            return response
         if slot is not None and slot not in ix["slots"]:
             raise APIError(404, "slot_unavailable")
         if player is not None and player not in ix["players"]:
@@ -224,15 +258,19 @@ def make_server(store, dist, port=8765):
                     return
                 routes = {"/api/current": ("current", set()), "/api/generation": ("generation", {"generation"}), "/api/overview": ("overview", {"generation"}),
                           "/api/slot": ("slot", {"generation", "slot"}), "/api/candidates": ("candidates", {"generation", "slot"}),
-                          "/api/signing": ("signing", {"generation", "player"})}
+                          "/api/signing": ("signing", {"generation", "player"}),
+                          "/api/profile": ("profile", {"generation", "player"}),
+                          "/api/history": ("history", {"generation", "player", "offset", "limit"}),
+                          "/api/benchmark": ("benchmark", {"generation", "player"})}
                 if url.path not in routes:
                     raise APIError(404, "route_unavailable")
                 route, keys = routes[url.path]
-                query = parse_qs(url.query, keep_blank_values=True, strict_parsing=True, max_num_fields=3)
+                query = parse_qs(url.query, keep_blank_values=True, strict_parsing=True, max_num_fields=4)
                 if set(query) != keys or any(len(v) != 1 or not v[0] or len(v[0]) > 4096 for v in query.values()):
                     raise APIError(400, "invalid_query")
                 self.json_response(200, store.data(route, query.get("generation", [None])[0],
-                                                   query.get("slot", [None])[0], query.get("player", [None])[0]))
+                                                   query.get("slot", [None])[0], query.get("player", [None])[0],
+                                                   int(query.get("offset", ["0"])[0]), int(query.get("limit", ["20"])[0])))
             except APIError as exc:
                 self.json_response(exc.status, {"error": exc.code})
             except ValueError:
