@@ -156,10 +156,96 @@ test("squad pagination is bounded and keyboard-accessible",async ({page,request}
   await next.click();
   await page.getByRole("searchbox",{name:"Search"}).fill(extra.at(-1)!.display_name);
   await expect(rows).toHaveCount(2);
-  await expect(table.getByText("No supported player destination")).toBeVisible();
-  await expect(table.getByRole("button",{name:extra.at(-1)!.display_name})).toHaveCount(0);
+  await expect(table.getByText("No current XI assignment")).toBeVisible();
+  await expect(table.getByRole("button",{name:extra.at(-1)!.display_name,exact:true})).toHaveCount(0);
+  await expect(table.getByRole("button",{name:`Profile: ${extra.at(-1)!.display_name}`,exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Reset filters"}).click();await expect(rows).toHaveCount(26);await expect(previous).toBeDisabled();
   expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(generation);
+});
+
+test("canonical profile connects squad, tactical and recruitment evidence",async ({page,request},info)=>{
+  const {generation_id:generation}=await (await request.get("/api/current")).json();
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation}})).json();
+  const assigned=over.data.baseline.find(a=>a.player_id)!;
+  const player=over.data.players.find(p=>p.player_id===assigned.player_id)!;
+  const observed=await (await request.get("/api/profile",{params:{generation,player:player.player_id}})).json();
+  const requests:string[]=[];page.on("request",r=>{if(r.url().includes("/api/profile?"))requests.push(r.url());});
+  await page.goto("/#"+new URLSearchParams({page:"Squad",generation}));
+  await expect(page.getByRole("heading",{name:"Squad directory"})).toBeVisible();expect(requests).toHaveLength(0);
+  const button=page.getByRole("button",{name:`Profile: ${player.display_name}`,exact:true});await button.focus();await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading",{name:player.display_name,exact:true})).toBeVisible();
+  await expect(page.getByText(player.player_id,{exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"Tactical suitability"})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Recorded attribute values"})).toBeVisible();
+  const [key,value]=Object.entries(observed.data.current_observation.record).find(([k,v])=>k.startsWith("attributes_")&&v)!;
+  await expect(page.getByRole("row").filter({has:page.getByRole("rowheader",{name:key.slice(11).replaceAll("_"," "),exact:true})}).getByRole("cell",{name:String(value),exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"League benchmark evidence"})).toBeVisible();
+  const profileURL=page.url();
+  for(const width of [1440,1280,768,390]){
+    await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`profile-${width}.png`),fullPage:true});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    expect((await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa"]).analyze()).violations.map(v=>v.id)).toEqual([]);
+  }
+  await page.getByRole("button",{name:"Inspect current XI assignment"}).click();await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+  await page.goBack();await expect(page).toHaveURL(profileURL);await expect(page.getByRole("heading",{name:player.display_name,exact:true})).toBeVisible();
+  await page.goForward();await expect(page.getByRole("heading",{name:"Tactics & XI"})).toBeVisible();
+  await page.getByRole("button",{name:"View player profile"}).click();await expect(page.getByRole("heading",{name:player.display_name,exact:true})).toBeVisible();
+  await page.reload();await expect(page).toHaveURL(profileURL);await expect(page.getByRole("heading",{name:player.display_name,exact:true})).toBeVisible();
+  const target=over.data.recommendations.find(r=>r.classification!=="already_in_squad")!;
+  const candidate=over.data.players.find(p=>p.player_id===target.player_id)!;
+  await page.goto("/#"+new URLSearchParams({page:"Recruitment",generation,slot:over.data.slots[0].id,player:target.player_id}));
+  await page.getByRole("button",{name:"View candidate profile"}).click();await expect(page.getByRole("heading",{name:candidate.display_name,exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Inspect recruitment comparison"}).click();await expect(page.getByRole("heading",{name:candidate.display_name,exact:true})).toBeVisible();
+  await page.goto("/#"+new URLSearchParams({page:"Player Profile",generation,player:"invalid-player"}));await expect(page.getByText("player unavailable",{exact:true})).toBeVisible();
+});
+
+test("profile remains pinned and retains historical identity after cohort removal",async ({page,request},info)=>{
+  const root=join(process.env.TOUCHLINE_FIXTURE_DIR!,"generations");
+  const first=JSON.parse(fs.readFileSync(join(root,"current.json"),"utf8")).generation_id as string;
+  const second=fs.readdirSync(join(root,"generations")).find(id=>id!==first)!;
+  const rollback=(id:string)=>execFileSync("python",["-c","import sys; from touchline_generation import rollback; rollback(sys.argv[1],sys.argv[2])",root,id],{cwd:".."});
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation:first}})).json();
+  const namesakes=over.data.players.filter(p=>p.display_name.includes("Alex Example"));
+  expect(namesakes.length).toBeGreaterThanOrEqual(2);
+  for(const p of namesakes){
+    await page.goto("/#"+new URLSearchParams({page:"Player Profile",generation:first,player:p.player_id}));
+    await expect(page.getByText(p.player_id,{exact:true})).toBeVisible();
+  }
+  const target=namesakes.find(p=>!p.cohorts.includes("squad"))!;
+  try{
+    await page.goto("/#"+new URLSearchParams({page:"Player Profile",generation:first,player:target.player_id}));
+    await expect(page.getByText(target.player_id,{exact:true})).toBeVisible();
+    rollback(second);
+    await expect(page.getByRole("button",{name:"Switch generation"})).toBeVisible({timeout:20000});
+    expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(first);
+    await page.getByRole("button",{name:"Switch generation"}).click();
+    await expect(page.getByText("No active tactical assessment in this generation. Inactive membership does not establish a transfer or release.")).toBeVisible();
+    await expect(page.getByText(target.player_id,{exact:true})).toBeVisible();
+    expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(second);
+    for(const width of [1440,768,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`profile-inactive-${width}.png`),fullPage:true});}
+    await page.goBack();await expect(page.getByRole("heading",{name:target.display_name,exact:true})).toBeVisible();
+    expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("generation")).toBe(first);
+  }finally{rollback(first);}
+});
+
+test("profile presents legacy missingness and available benchmark projection without inventing history",async ({page,request},info)=>{
+  const {generation_id:generation}=await (await request.get("/api/current")).json();
+  const over:Envelope<Overview>=await (await request.get("/api/overview",{params:{generation}})).json();
+  const player=over.data.players.find(p=>p.cohorts.includes("squad")&&p.cohorts.includes("target"))!;
+  const profile=await (await request.get("/api/profile",{params:{generation,player:player.player_id}})).json();
+  const benchmark=await (await request.get("/api/benchmark",{params:{generation,player:player.player_id}})).json();
+  // Explicitly synthetic frontend-only projections; operational report generation is unchanged.
+  await page.route("**/api/profile?*",r=>r.fulfill({json:{...profile,data:{...profile.data,current_observation:null,membership:null,history_status:"unavailable",history_reason:"generation_has_no_history_artifact"}}}));
+  await page.goto("/#"+new URLSearchParams({page:"Player Profile",generation,player:player.player_id}));
+  await expect(page.getByText(/Recorded observation unavailable: generation has no history artifact/)).toBeVisible();
+  await expect(page.getByText(/Active assessment cohorts: squad, target/)).toBeVisible();
+  await expect(page.getByRole("region",{name:"Tactical slot comparisons"})).toBeVisible();
+  for(const width of [1440,768,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`profile-legacy-${width}.png`),fullPage:true});}
+  await page.unroute("**/api/profile?*");
+  await page.route("**/api/benchmark?*",r=>r.fulfill({json:{...benchmark,data:{...benchmark.data,status:"available",reason:null,reference:{...benchmark.data.reference,competition:{id:"invented",display_name:"Invented league"},season_start_year:2026,extraction_game_date:"2027-01-01"},comparisons:[{player_id:player.player_id,profile:"CB",reference_population:"profile_group",native_position:null,reference_position_codes:["dc"],attribute_profile_score:12,status:"available",reason:null,sample_size:30,league_median:10,difference_from_median:2,percentile:75,warnings:[]}]}}}));
+  await page.reload();await expect(page.getByText(/Competition: Invented league/)).toBeVisible();
+  const table=page.getByRole("region",{name:"League reference comparisons"});await expect(table.getByRole("cell",{name:"75.00",exact:true})).toBeVisible();await expect(table.getByRole("cell",{name:"2.00",exact:true})).toBeVisible();
+  for(const width of [1440,768,390]){await page.setViewportSize({width,height:900});await page.screenshot({path:info.outputPath(`profile-benchmark-projection-${width}.png`),fullPage:true});}
 });
 
 test("squad remains pinned until explicit generation switch",async ({page,request})=>{

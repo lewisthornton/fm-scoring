@@ -9,6 +9,10 @@ The original approved implementation boundary was **M2b.1 only**.
 PR #29 merged that foundation; the current implementation boundary is
 **M2b.2 only**. Later gates remain independently reviewed and deferred.
 
+PR #30 was merged at `b358aaf` following user-reported physical Windows
+acceptance (50/50, with three accepted UX observations). M2b.3 is the next
+local implementation boundary; M2b.4 and M2c remain deferred.
+
 Audit base: PR #28 (45acd2f). The React/TypeScript client is a small
 dependency-light app: main.tsx owns views, async queries and route state;
 state.ts serializes opaque generation, slot and player IDs into the fragment;
@@ -288,3 +292,61 @@ package installer is available. Its corrected workflow remains unverified
 until GitHub CI runs. Prior CI WebKit passed 6/6 on the original commit.
 GitHub CI for the correction and physical Windows acceptance remain pending;
 no remote PR update or merge is authorized by these local results.
+
+## M2b.3 — Player profile and tactical suitability
+
+Audit base: `b358aaf`, merged PR #30. Existing M1 generation validation,
+M2a historical artifact validation, and profile response limits remain
+unchanged. No backend or persisted schema extensions are needed.
+
+| Component | Validated contract and semantics |
+| --- | --- |
+| Identity, active cohorts, current relationship | `/api/profile` assessment (same canonical assessment as overview); historical-only identity from captured record. |
+| Last observation and membership | `/api/profile` current_observation, membership; last stored version can predate accepted chronology. Membership is not ownership. |
+| Recorded attributes | `current_observation.record.attributes_*` original captured values; applicable assessment missing_attributes supplements missing keys. No imputation. |
+| Tactical suitability | `assessment.slots`, weighted attribute mean and accepted-position/phase familiarity; incompatible domains excluded, no role suitability or predicted performance. |
+| Current assignment / comparisons | `/api/overview` baseline; `/api/slot` eligible and rejected squad players, incumbent, selected on demand; target eligibility from existing signing recommendations, hypothetical only. |
+| Benchmarks | `/api/benchmark` reference competition, season, extraction date, population, sample, median, difference and percentile; unavailable reasons preserved. |
+| Recruitment context | Captured age, contract wage/start/end/status, loan parent/end, transfer_value when state is ok/zero. No asking price, agreed fee, currency conversion or inferred ownership. |
+| History | `/api/history` inspected but not consumed in M2b.3. No development chart, extrapolation or historical rescoring. |
+
+Profile is a contextual hash destination, not a separate navigation state.
+Squad rows retain their existing assignment actions; separate clearly
+labelled profile actions open all active canonical players. Tactics and
+recruitment detail expose profile links. The profile shows exact values,
+score bars with table text, and an on-demand slot comparison. Back/Forward
+and reload use the same hash route. Every profile/benchmark request checks
+both generation and player identity, and cancelled or stale requests never
+render. Explicit switching validates destination profile even when a player
+is no longer active; retained historical identity is supported by the M2a
+endpoint, not a namesake substitution. An unavailable player clears selection;
+other endpoint errors retain the pinned route. Legacy generations retain
+assessment while disclosing unavailable record evidence. No bulk profiles
+or historical requests are performed.
+
+M2b.2 observations: permanent/incoming/outgoing/unknown loan-state values
+are now displayed as Club relationship without changing semantics; name
+sorting uses en-GB base-sensitive collation, canonical ID tie break, and
+missing fields last. Captured age and financial metadata are shown only
+in the profile; monetary values are raw export amounts (no known currency
+in the contract). Confirmed asking prices and agreed fees are unsupported.
+
+Local acceptance evidence (invented data only): Python 217/217, frontend
+unit tests 11/11, TypeScript/Vite production build passed; full Chromium
+and Firefox suites 12/12 each (24 total), including M1 regressions and
+performance smoke. Profile screenshots at 1440/1280/768/390 and inactive,
+legacy and benchmark-projection states at 1440/768/390 are in Playwright
+test results. The profile scenario checks keyboard activation, no bulk
+profile requests, exact identity/attribute value, Back/Forward/reload,
+viewport overflow and axe WCAG 2 A/AA checks. Distinct namesakes and
+inactive historical identity are exercised against genuine published fixture
+generations. Legacy/available benchmark projections are explicitly synthetic
+frontend test responses; they do not establish a real league reference.
+The initial pagination regression failed because the new profile button
+matched the previous substring-based no-XI-button assertion; exact names
+now distinguish the preserved XI action from the new contextual profile.
+Linux Python-only runtime and launcher smoke passed. WebKit could not launch
+due to missing host libraries (GTK4, Graphene, WOFF2, HarfBuzz ICU, Hyphen,
+Manette and GLES). Physical 200% browser zoom and Windows acceptance remain
+unverified (existing M1 reflow proxy is not physical zoom certification).
+Independent review and remote CI remain pending. No publication authorized.

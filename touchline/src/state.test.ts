@@ -1,9 +1,20 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {filterCandidates, routeFrom, routeTo, switchGeneration} from "./state";
-import {squadRows, filterSquad, squadSummary} from "./squad";
+import {squadRows, filterSquad, squadSummary,clubRelationship} from "./squad";
 import type {Player, Assignment, Slot} from "./types";
+test("profile routes preserve opaque identity and remain on profile when a slot disappears",()=>{
+  const r={page:"Player Profile" as const,generation:"old",slot:"lb",player:"opaque/ñ",impact:false};
+  assert.deepEqual(routeFrom(routeTo(r)),r);
+  const next=switchGeneration(r,"new",[],[r.player],[]);
+  assert.equal(next.route.page,"Player Profile");assert.equal(next.route.player,r.player);assert.equal(next.route.slot,"");
+});
 const player=(id:string,cohorts:string[],availability:string,keeper=false):Player=>({player_id:id,display_name:"Namesake",club:"Invented",cohorts,availability,keeper,loan_state:"unknown",record_game_date:"2026-07-01",last_seen_game_date:"2026-07-02",game_build:null});
+test("accented names sort alphabetically with canonical tie breaks and loan relationships retain semantics",()=>{
+  const rows=squadRows([{...player("z",["squad"],"available"),display_name:"Óscar"},{...player("a",["squad"],"available"),display_name:"Oscar"},{...player("b",["squad"],"available"),display_name:"Zed"}],[],[]);
+  assert.deepEqual(filterSquad(rows,"","all","all","name",false).map(r=>r.player.player_id),["a","z","b"]);
+  assert.deepEqual(["permanent","incoming","outgoing","unknown"].map(clubRelationship),["Permanent","Incoming loan","Outgoing loan","Unknown"]);
+});
 test("directory only includes active squad, counts overlap once and preserves unknown",()=>{
   const rows=squadRows([player("b",["squad","target"],"unknown"),player("a",["squad"],"available",true),player("c",["target"],"available")],[],[]);
   assert.deepEqual(squadSummary(rows),{total:2,known:1,unknown:1,assigned:0});
